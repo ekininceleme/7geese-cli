@@ -25,7 +25,7 @@ archives:
         formats: [zip]
 checksum:
   name_template: checksums.txt
-homebrew:
+brews:
   - name: 7geese-cli
     repository:
       owner: ekininceleme
