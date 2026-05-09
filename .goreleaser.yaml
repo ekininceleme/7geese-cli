@@ -26,7 +26,7 @@ archives:
 checksum:
   name_template: checksums.txt
 brews:
-  - name: 7geese-cli
+  - name: sevengeese-cli
     repository:
       owner: ekininceleme
       name: homebrew-tap

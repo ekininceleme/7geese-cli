@@ -8,7 +8,7 @@ Export your 7Geese performance data — objectives, 1:1s, recognitions, and revi
 
 ```bash
 brew tap ekininceleme/tap
-brew install 7geese-cli
+brew install sevengeese-cli
 ```
 
 Or download a pre-built binary from the [latest release](https://github.com/ekininceleme/7geese-cli/releases/latest). On macOS, clear the quarantine flag after downloading:
