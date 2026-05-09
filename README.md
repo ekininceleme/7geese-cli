@@ -20,7 +20,7 @@ xattr -d com.apple.quarantine 7geese-cli && chmod +x 7geese-cli
 ## Quick start
 
 ```bash
-# 1. Log in using your existing Chrome session (must be logged into app.7geese.com)
+# 1. Log in using your existing browser session (Chrome or Firefox)
 7geese-cli auth login
 
 # 2. Sync your data to a local database
@@ -34,13 +34,15 @@ xattr -d com.apple.quarantine 7geese-cli && chmod +x 7geese-cli
 
 ### `auth login`
 
-Reads your `sgsession4` session cookie directly from Chrome's encrypted cookie store — no API key or password needed. You must already be logged into 7Geese in Chrome.
-
-**macOS**: the OS will show a dialog asking permission to access the login keychain. Click **Allow** (or **Always Allow** to avoid the prompt in future).
+Reads your `sgsession4` session cookie from your browser's encrypted cookie store — no API key or password needed. Works with Chrome and Firefox. You must already be logged into 7Geese in your browser.
 
 ```bash
-7geese-cli auth login
+7geese-cli auth login           # tries Chrome first, then Firefox
+7geese-cli auth login --chrome
+7geese-cli auth login --firefox
 ```
+
+**macOS**: the OS will show a dialog asking permission to access the login keychain. Click **Allow** (or **Always Allow** to avoid the prompt in future).
 
 ### `sync`
 
@@ -90,7 +92,7 @@ Checks that authentication and connectivity are working.
 
 ## Authentication details
 
-7Geese uses Okta SSO — there are no API tokens. `auth login` reads your `sgsession4` cookie from Chrome's local encrypted store using [sweetcookie](https://github.com/steipete/sweetcookie). Your session stays local; nothing is sent anywhere except back to 7Geese.
+7Geese uses Okta SSO — there are no API tokens. `auth login` reads your `sgsession4` cookie from Chrome or Firefox's local encrypted store using [sweetcookie](https://github.com/steipete/sweetcookie). Your session stays local; nothing is sent anywhere except back to 7Geese.
 
 If your session expires, just run `auth login` again.
 
@@ -105,13 +107,13 @@ export SEVENGEESE_SESSION=<your-sgsession4-cookie-value>
 7geese-cli sync
 ```
 
-To get the cookie value: open Chrome, log into app.7geese.com, open DevTools → Application → Cookies → `app.7geese.com`, and copy the value of `sgsession4`.
+To get the cookie value: open Chrome or Firefox, log into app.7geese.com, open DevTools → Application/Storage → Cookies → `app.7geese.com`, and copy the value of `sgsession4`.
 
 ## Troubleshooting
 
 **macOS Keychain prompt** — Click Allow when macOS asks for keychain access during `auth login`. If you dismissed it, run `auth login` again.
 
-**`auth login` finds no cookies** — Open Chrome, log into app.7geese.com via Okta, then retry.
+**`auth login` finds no cookies** — Make sure you're logged into app.7geese.com via Okta in Chrome or Firefox, then retry. Pass `--chrome` or `--firefox` to target a specific browser.
 
 **Linux: `auth login` fails with keyring error** — Make sure a secret service is running (`gnome-keyring-daemon` on GNOME, or KWallet on KDE). Headless/server environments without a secret service are not supported.
 
