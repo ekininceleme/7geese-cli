@@ -33,4 +33,3 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/ekininceleme/7geese-cli"
     description: "Export your 7Geese performance data — objectives, 1:1s, recognition, and reviews — as JSON."
-    binary: "7geese-cli"
