@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 
 	"7geese-cli/internal/config"
 	"7geese-cli/internal/store"
@@ -1347,28 +1349,62 @@ func syncUserSnapshots(flags *rootFlags, db *store.Store, profileID int, force b
 	if err != nil {
 		return 0, fmt.Errorf("listing snapshots: %w", err)
 	}
-	synced := 0
-	for _, s := range summaries {
-		id := fmt.Sprintf("%d", s.PK)
-		if !force {
-			existing, _ := db.Get("user_snapshots", id)
-			if existing != nil {
-				continue
+
+	var toFetch []gqlSnapshotSummary
+	if force {
+		toFetch = summaries
+	} else {
+		for _, s := range summaries {
+			if existing, _ := db.Get("user_snapshots", fmt.Sprintf("%d", s.PK)); existing == nil {
+				toFetch = append(toFetch, s)
 			}
 		}
-		snap, err := fetchSingleSnapshot(cfg, s.PK)
-		if err != nil {
-			continue
-		}
-		data, err := json.Marshal(snap)
-		if err != nil {
-			continue
-		}
-		if err := db.Upsert("user_snapshots", id, json.RawMessage(data)); err != nil {
+	}
+	if len(toFetch) == 0 {
+		return 0, nil
+	}
+
+	type result struct {
+		id   string
+		data json.RawMessage
+	}
+
+	const maxConcurrent = 5
+	resultCh := make(chan result, len(toFetch))
+	sem := make(chan struct{}, maxConcurrent)
+
+	var wg sync.WaitGroup
+	for _, s := range toFetch {
+		wg.Add(1)
+		go func(pk int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			snap, err := fetchSingleSnapshot(cfg, pk)
+			if err != nil {
+				return
+			}
+			data, _ := json.Marshal(snap)
+			resultCh <- result{id: fmt.Sprintf("%d", pk), data: json.RawMessage(data)}
+		}(s.PK)
+	}
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	synced := 0
+	total := len(toFetch)
+	for r := range resultCh {
+		if err := db.Upsert("user_snapshots", r.id, r.data); err != nil {
 			continue
 		}
 		synced++
+		if humanFriendly {
+			fmt.Fprintf(os.Stderr, "\r  user_snapshots: %d/%d done...", synced, total)
+		}
 	}
+	// Leave cursor on the progress line; caller overwrites it with the final summary.
 	return synced, nil
 }
 

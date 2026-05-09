@@ -322,9 +322,11 @@ Exit codes & warnings:
 				t0 := time.Now()
 				sCount, sErr := syncUserSnapshots(flags, db, profileID, full)
 				if sErr != nil && humanFriendly {
-					fmt.Fprintf(os.Stderr, "  user_snapshots: warning: %v (%dms)\n", sErr, time.Since(t0).Milliseconds())
+					fmt.Fprintf(os.Stderr, "\r  user_snapshots: warning: %v (%dms)\n", sErr, time.Since(t0).Milliseconds())
+				} else if humanFriendly && sCount == 0 {
+					fmt.Fprintf(os.Stderr, "  user_snapshots: already up to date (%dms)\n", time.Since(t0).Milliseconds())
 				} else if humanFriendly {
-					fmt.Fprintf(os.Stderr, "  user_snapshots: %d synced (%dms)\n", sCount, time.Since(t0).Milliseconds())
+					fmt.Fprintf(os.Stderr, "\r  user_snapshots: %d synced (%dms)\n", sCount, time.Since(t0).Milliseconds())
 				}
 			}
 
