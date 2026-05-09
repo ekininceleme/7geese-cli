@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-05-09T09:28:50.531947Z",
+  "printing_press_version": "4.2.0",
+  "api_name": "7geese",
+  "display_name": "7Geese",
+  "cli_name": "7geese-pp-cli",
+  "owner": "ekin-inceleme",
+  "printer_name": "Ekin Inceleme",
+  "spec_path": "/Users/ekin.inceleme/printing-press/.runstate/cli-printing-press-74e0cd56/runs/20260509-101239/research/7geese-spec.yaml",
+  "spec_format": "internal",
+  "spec_checksum": "sha256:a7f7124c8af299aeac920a9ac61fdf695d851400ae5b783122c6ae00c955e69c",
+  "run_id": "20260509-101239",
+  "mcp_binary": "7geese-pp-mcp",
+  "mcp_tool_count": 36,
+  "mcp_ready": "partial",
+  "api_version": "v1",
+  "auth_type": "cookie",
+  "auth_env_vars": [
+    "SEVENGEESE_SESSION"
+  ]
+}

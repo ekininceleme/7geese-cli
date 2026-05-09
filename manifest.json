@@ -1,0 +1,38 @@
+{
+  "manifest_version": "0.3",
+  "name": "7geese-pp-mcp",
+  "display_name": "7Geese",
+  "version": "4.2.0",
+  "description": "7Geese API surface as MCP tools.",
+  "author": {
+    "name": "CLI Printing Press"
+  },
+  "license": "Apache-2.0",
+  "server": {
+    "type": "binary",
+    "entry_point": "bin/7geese-pp-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/bin/7geese-pp-mcp",
+      "args": [],
+      "env": {
+        "SEVENGEESE_SESSION": "${user_config.sevengeese_session}"
+      }
+    }
+  },
+  "user_config": {
+    "sevengeese_session": {
+      "type": "string",
+      "title": "SEVENGEESE_SESSION",
+      "description": "Optional. Sets SEVENGEESE_SESSION for the 7Geese MCP server.",
+      "sensitive": true
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  }
+}

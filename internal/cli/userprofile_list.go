@@ -1,0 +1,80 @@
+// Copyright 2026 ekin-inceleme. Licensed under Apache-2.0. See LICENSE.
+// Copyright 2026 ekin-inceleme. Licensed under Apache-2.0.
+
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+)
+
+func newUserprofileListCmd(flags *rootFlags) *cobra.Command {
+	var flagLimit int
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "",
+		Example: "  7geese-cli userprofile list",
+		Annotations: map[string]string{"pp:endpoint": "userprofile.list", "pp:method": "GET", "pp:path": "/api/v1/userprofile/", "mcp:read-only": "true"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := flags.newClient()
+			if err != nil {
+				return err
+			}
+
+			path := "/api/v1/userprofile/"
+			params := map[string]string{}
+			if flagLimit != 0 {
+				params["limit"] = fmt.Sprintf("%v", flagLimit)
+			}
+			data, prov, err := resolveRead(cmd.Context(), c, flags, "userprofile", false, path, params, nil)
+			if err != nil {
+				return classifyAPIError(err, flags)
+			}
+			// Honor --limit when the API accepts but ignores ?limit=N.
+			data = truncateJSONArray(data, flagLimit)
+			// Print provenance to stderr for human-facing output
+			{
+				var countItems []json.RawMessage
+				_ = json.Unmarshal(data, &countItems)
+				printProvenance(cmd, len(countItems), prov)
+			}
+			// For JSON output, wrap with provenance envelope before passing through flags.
+			// --select wins over --compact when both are set; --compact only runs when
+			// no explicit fields were requested.
+			if flags.asJSON || !isTerminal(cmd.OutOrStdout()) {
+				filtered := data
+				if flags.selectFields != "" {
+					filtered = filterFields(filtered, flags.selectFields)
+				} else if flags.compact {
+					filtered = compactFields(filtered)
+				}
+				wrapped, wrapErr := wrapWithProvenance(filtered, prov)
+				if wrapErr != nil {
+					return wrapErr
+				}
+				return printOutput(cmd.OutOrStdout(), wrapped, true)
+			}
+			// For all other output modes (table, csv, plain, quiet), use the standard pipeline
+			if wantsHumanTable(cmd.OutOrStdout(), flags) {
+				var items []map[string]any
+				if json.Unmarshal(data, &items) == nil && len(items) > 0 {
+					if err := printAutoTable(cmd.OutOrStdout(), items); err != nil {
+						return err
+					}
+					if len(items) >= 25 {
+						fmt.Fprintf(os.Stderr, "\nShowing %d results. To narrow: add --limit, --json --select, or filter flags.\n", len(items))
+					}
+					return nil
+				}
+			}
+			return printOutputWithFlags(cmd.OutOrStdout(), data, flags)
+		},
+	}
+	cmd.Flags().IntVar(&flagLimit, "limit", 0, "")
+
+	return cmd
+}
