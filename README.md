@@ -67,7 +67,7 @@ Exports all your performance data to a single JSON file.
 The JSON output contains:
 
 - **objectives** — OKRs where you are an owner or stakeholder, with key results, progress, and last check-in
-- **one_on_ones** — Your 1:1 meeting history with questions and answers from both participants
+- **oneonones** — Your 1:1 meeting history with questions and answers from both participants
 - **recognitions** — Recognition badges you sent or received
 - **reviews** — Completed performance review snapshots with your answers and your manager's responses, including peer feedback
 
