@@ -1285,13 +1285,13 @@ func defaultDBPath(name string) string {
 var sharedStdin = bufio.NewReader(os.Stdin)
 
 // promptConfirm prints prompt to stderr and reads a Y/n response.
-// Returns true if the user confirms, --yes is set, or stdin is not a TTY
-// (non-interactive: AI agents, pipes, CI). Returns false on 'n' or --no-input.
+// Returns true if the user confirms or --yes is set.
+// Returns false when stdin is not a TTY, --no-input is set, or the user answers 'n'.
 func promptConfirm(cmd *cobra.Command, flags *rootFlags, prompt string) bool {
-	if flags.noInput {
+	if flags.noInput || !isTerminal(os.Stdin) {
 		return false
 	}
-	if flags.yes || !isTerminal(os.Stdin) {
+	if flags.yes {
 		fmt.Fprint(cmd.ErrOrStderr(), prompt+"Y\n")
 		return true
 	}
