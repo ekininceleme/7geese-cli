@@ -4,17 +4,40 @@ Export your 7Geese performance data — objectives, 1:1s, recognitions, and revi
 
 7Geese has no API tokens and no official CLI. This tool reads your existing browser session, syncs your data to a local SQLite store, and exports everything to a single JSON file.
 
+## Platform support
+
+Pre-built binaries are available for macOS, Linux, and Windows (amd64 and arm64).
+
+`auth login` reads cookies from Chrome's encrypted store. The mechanism differs by OS:
+
+| Platform | How cookies are decrypted | Notes |
+|----------|--------------------------|-------|
+| **macOS** | macOS Keychain | **Triggers a permission dialog** — click Allow when prompted |
+| **Linux** | GNOME Keyring or KDE KWallet | Requires a running secret service (standard on GNOME/KDE desktops) |
+| **Windows** | Windows DPAPI | Works on most Chrome versions; see troubleshooting if it fails |
+
+Firefox is also supported on all platforms. Safari is macOS only.
+
 ## Install
+
+### macOS (Homebrew)
 
 ```bash
 brew tap ekininceleme/tap
 brew install sevengeese-cli
 ```
 
-Or download a pre-built binary from the [latest release](https://github.com/ekininceleme/7geese-cli/releases/latest). On macOS, clear the quarantine flag after downloading:
+### Linux / Windows
 
+Download a pre-built binary from the [latest release](https://github.com/ekininceleme/7geese-cli/releases/latest).
+
+On macOS (direct download only, not Homebrew), clear the quarantine flag:
 ```bash
-xattr -d com.apple.quarantine 7geese-cli
+xattr -d com.apple.quarantine 7geese-cli && chmod +x 7geese-cli
+```
+
+On Linux, mark it executable:
+```bash
 chmod +x 7geese-cli
 ```
 
@@ -22,6 +45,7 @@ chmod +x 7geese-cli
 
 ```bash
 # 1. Log in using your existing Chrome session (must be logged into app.7geese.com)
+#    On macOS this will prompt for Keychain access — click Allow
 7geese-cli auth login
 
 # 2. Sync your data to a local database
@@ -36,6 +60,8 @@ chmod +x 7geese-cli
 ### `auth login`
 
 Reads your `sgsession4` session cookie directly from Chrome's encrypted cookie store — no API key or password needed. You must already be logged into 7Geese in Chrome.
+
+**macOS**: the OS will show a dialog asking permission to access the login keychain. Click **Allow** (or **Always Allow** to avoid the prompt in future).
 
 ```bash
 7geese-cli auth login
@@ -89,7 +115,7 @@ Checks that authentication and connectivity are working.
 
 ## Authentication details
 
-7Geese uses Okta SSO — there are no API tokens. `auth login` reads your `sgsession4` cookie from Chrome's local encrypted store using [sweetcookie](https://github.com/mortenlj/sweetcookie). Your session stays local; nothing is sent anywhere except back to 7Geese.
+7Geese uses Okta SSO — there are no API tokens. `auth login` reads your `sgsession4` cookie from Chrome's local encrypted store using [sweetcookie](https://github.com/steipete/sweetcookie). Your session stays local; nothing is sent anywhere except back to 7Geese.
 
 If your session expires, just run `auth login` again.
 
@@ -97,7 +123,13 @@ Config is stored at `~/.config/7geese-cli/config.json`.
 
 ## Troubleshooting
 
+**macOS Keychain prompt** — Click Allow when macOS asks for keychain access during `auth login`. If you dismissed it, run `auth login` again.
+
 **`auth login` finds no cookies** — Open Chrome, log into app.7geese.com via Okta, then retry.
+
+**Linux: `auth login` fails with keyring error** — Make sure a secret service is running (`gnome-keyring-daemon` on GNOME, or KWallet on KDE). Headless/server environments without a secret service are not supported.
+
+**Windows: `auth login` fails to decrypt cookies** — Newer Chromium versions on Windows use app-bound encryption that may not be supported. Try using Firefox instead (`7geese-cli auth login --firefox`).
 
 **401 errors after sync** — Session expired. Run `7geese-cli auth login` again.
 
