@@ -25,7 +25,7 @@ archives:
         formats: [zip]
 checksum:
   name_template: checksums.txt
-brews:
+homebrew_casks:
   - name: sevengeese-cli
     repository:
       owner: ekininceleme
@@ -33,5 +33,4 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/ekininceleme/7geese-cli"
     description: "Export your 7Geese performance data — objectives, 1:1s, recognition, and reviews — as JSON."
-    install: |
-      bin.install "7geese-cli"
+    binary: "7geese-cli"
