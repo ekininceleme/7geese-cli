@@ -5,10 +5,12 @@
     "exportAnswer": {
       "properties": {
         "author": {
-          "type": "string"
+          "type": "string",
+          "description": "Full name of the person who wrote this answer"
         },
         "text": {
-          "type": "string"
+          "type": "string",
+          "description": "The answer text"
         }
       },
       "additionalProperties": false,
@@ -21,22 +23,28 @@
     "exportBadge": {
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "description": "Badge event ID"
         },
         "date": {
-          "type": "string"
+          "type": "string",
+          "description": "Date the recognition was given (ISO 8601)"
         },
         "from": {
-          "type": "string"
+          "type": "string",
+          "description": "Full name of the person who gave the badge"
         },
         "to": {
-          "type": "string"
+          "type": "string",
+          "description": "Full name of the person who received the badge"
         },
         "badge": {
-          "type": "string"
+          "type": "string",
+          "description": "Name of the badge awarded"
         },
         "message": {
-          "type": "string"
+          "type": "string",
+          "description": "Personal message included with the badge"
         }
       },
       "additionalProperties": false,
@@ -49,16 +57,20 @@
     "exportCheckin": {
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "description": "Check-in ID"
         },
         "date": {
-          "type": "string"
+          "type": "string",
+          "description": "Date the check-in was posted (ISO 8601)"
         },
         "message": {
-          "type": "string"
+          "type": "string",
+          "description": "Free-text update posted with this check-in"
         },
         "progress_at_checkin": {
-          "type": "number"
+          "type": "number",
+          "description": "Progress percentage recorded at the time of this check-in"
         }
       },
       "additionalProperties": false,
@@ -71,25 +83,32 @@
     "exportKR": {
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "description": "Key result ID"
         },
         "name": {
-          "type": "string"
+          "type": "string",
+          "description": "Key result title"
         },
         "description": {
-          "type": "string"
+          "type": "string",
+          "description": "Optional longer description"
         },
         "progress": {
-          "type": "number"
+          "type": "number",
+          "description": "Completion percentage (0–100)"
         },
         "measurement_type": {
-          "type": "string"
+          "type": "string",
+          "description": "How progress is measured: percent"
         },
         "current_value": {
-          "type": "number"
+          "type": "number",
+          "description": "Current measured value"
         },
         "target_value": {
-          "type": "number"
+          "type": "number",
+          "description": "Target value to reach 100% completion"
         }
       },
       "additionalProperties": false,
@@ -105,22 +124,27 @@
     "exportMeeting": {
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "description": "1:1 meeting ID"
         },
         "date": {
-          "type": "string"
+          "type": "string",
+          "description": "Scheduled date and time of the meeting (ISO 8601)"
         },
         "with": {
-          "type": "string"
+          "type": "string",
+          "description": "Full name of the other participant"
         },
         "status": {
-          "type": "string"
+          "type": "string",
+          "description": "Meeting status: completed or upcoming"
         },
         "questions": {
           "items": {
             "$ref": "#/$defs/exportQA"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Questions and answers from both participants"
         }
       },
       "additionalProperties": false,
@@ -135,46 +159,58 @@
     "exportObjective": {
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "description": "Objective ID"
         },
         "name": {
-          "type": "string"
+          "type": "string",
+          "description": "Objective title"
         },
         "description": {
-          "type": "string"
+          "type": "string",
+          "description": "Optional longer description of the objective"
         },
         "type": {
-          "type": "string"
+          "type": "string",
+          "description": "Scope of the objective: personal"
         },
         "participant_type": {
-          "type": "string"
+          "type": "string",
+          "description": "The user's role on this objective: owner"
         },
         "progress": {
-          "type": "number"
+          "type": "number",
+          "description": "Overall completion percentage (0–100)"
         },
         "start_date": {
-          "type": "string"
+          "type": "string",
+          "description": "Objective start date (YYYY-MM-DD)"
         },
         "due_date": {
-          "type": "string"
+          "type": "string",
+          "description": "Objective due date (YYYY-MM-DD)"
         },
         "completed_date": {
-          "type": "string"
+          "type": "string",
+          "description": "Date the objective was marked complete (YYYY-MM-DD)"
         },
         "closed": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Whether the objective is closed (completed or abandoned)"
         },
         "key_results": {
           "items": {
             "$ref": "#/$defs/exportKR"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Key results nested under this objective"
         },
         "checkins": {
           "items": {
             "$ref": "#/$defs/exportCheckin"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Most recent progress check-in"
         }
       },
       "additionalProperties": false,
@@ -190,13 +226,15 @@
     "exportPeerQuestion": {
       "properties": {
         "question": {
-          "type": "string"
+          "type": "string",
+          "description": "The peer feedback question text"
         },
         "answers": {
           "items": {
             "type": "string"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Anonymised answers submitted by peers"
         }
       },
       "additionalProperties": false,
@@ -208,16 +246,19 @@
     "exportPeerReport": {
       "properties": {
         "title": {
-          "type": "string"
+          "type": "string",
+          "description": "Title of the peer feedback request"
         },
         "published": {
-          "type": "string"
+          "type": "string",
+          "description": "Date the curated report was published (ISO 8601)"
         },
         "questions": {
           "items": {
             "$ref": "#/$defs/exportPeerQuestion"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Questions with anonymised peer answers"
         }
       },
       "additionalProperties": false,
@@ -229,31 +270,37 @@
     "exportProfile": {
       "properties": {
         "exported_at": {
-          "type": "string"
+          "type": "string",
+          "description": "ISO 8601 timestamp of when this export was generated"
         },
         "profile": {
-          "$ref": "#/$defs/exportUser"
+          "$ref": "#/$defs/exportUser",
+          "description": "The authenticated user's profile information"
         },
         "objectives": {
           "items": {
             "$ref": "#/$defs/exportObjective"
           },
-          "type": "array"
+          "type": "array",
+          "description": "OKRs where the user is an owner"
         },
         "oneonones": {
           "items": {
             "$ref": "#/$defs/exportMeeting"
           },
-          "type": "array"
+          "type": "array",
+          "description": "1:1 meeting history with full Q\u0026A from both participants"
         },
         "recognitions": {
-          "$ref": "#/$defs/exportRecognition"
+          "$ref": "#/$defs/exportRecognition",
+          "description": "Recognition badges sent and received"
         },
         "reviews": {
           "items": {
             "$ref": "#/$defs/exportReview"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Completed performance review cycles"
         }
       },
       "additionalProperties": false,
@@ -270,16 +317,19 @@
     "exportQA": {
       "properties": {
         "question": {
-          "type": "string"
+          "type": "string",
+          "description": "The question text"
         },
         "hint": {
-          "type": "string"
+          "type": "string",
+          "description": "Optional guidance or sub-prompt shown under the question"
         },
         "answers": {
           "items": {
             "$ref": "#/$defs/exportAnswer"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Answers submitted by each participant"
         }
       },
       "additionalProperties": false,
@@ -295,13 +345,15 @@
           "items": {
             "$ref": "#/$defs/exportBadge"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Badges the user received from others"
         },
         "given": {
           "items": {
             "$ref": "#/$defs/exportBadge"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Badges the user sent to others"
         }
       },
       "additionalProperties": false,
@@ -314,37 +366,47 @@
     "exportReview": {
       "properties": {
         "id": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Performance review cycle ID"
         },
         "title": {
-          "type": "string"
+          "type": "string",
+          "description": "Name of the review cycle (e.g. 'Q1 2026 Performance Review')"
         },
         "period": {
-          "type": "string"
+          "type": "string",
+          "description": "Human-readable quarter label derived from the start date (e.g. Q1 2026)"
         },
         "start_date": {
-          "type": "string"
+          "type": "string",
+          "description": "Review period start date (ISO 8601)"
         },
         "end_date": {
-          "type": "string"
+          "type": "string",
+          "description": "Review period end date (ISO 8601)"
         },
         "state": {
-          "type": "string"
+          "type": "string",
+          "description": "Workflow state of the review cycle"
         },
         "position": {
-          "type": "string"
+          "type": "string",
+          "description": "The user's job title at the time of the review"
         },
         "manager": {
-          "type": "string"
+          "type": "string",
+          "description": "Full name of the user's manager for this review"
         },
         "sections": {
           "items": {
             "$ref": "#/$defs/exportReviewSection"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Review form sections containing questions and answers"
         },
         "peer_feedback": {
-          "$ref": "#/$defs/exportPeerReport"
+          "$ref": "#/$defs/exportPeerReport",
+          "description": "Curated peer feedback report if one was published for this cycle"
         }
       },
       "additionalProperties": false,
@@ -361,13 +423,16 @@
     "exportReviewQA": {
       "properties": {
         "question": {
-          "type": "string"
+          "type": "string",
+          "description": "The review question text"
         },
         "employee": {
-          "type": "string"
+          "type": "string",
+          "description": "The employee's answer"
         },
         "manager": {
-          "type": "string"
+          "type": "string",
+          "description": "The manager's response"
         }
       },
       "additionalProperties": false,
@@ -379,13 +444,15 @@
     "exportReviewSection": {
       "properties": {
         "title": {
-          "type": "string"
+          "type": "string",
+          "description": "Section heading"
         },
         "items": {
           "items": {
             "$ref": "#/$defs/exportReviewQA"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Questions and answers within this section"
         }
       },
       "additionalProperties": false,
@@ -398,22 +465,28 @@
     "exportUser": {
       "properties": {
         "id": {
-          "type": "integer"
+          "type": "integer",
+          "description": "7Geese user profile ID"
         },
         "name": {
-          "type": "string"
+          "type": "string",
+          "description": "Full name"
         },
         "email": {
-          "type": "string"
+          "type": "string",
+          "description": "Work email address"
         },
         "position": {
-          "type": "string"
+          "type": "string",
+          "description": "Job title or position"
         },
         "hire_date": {
-          "type": "string"
+          "type": "string",
+          "description": "Date the user joined the organisation (YYYY-MM-DD)"
         },
         "manager": {
-          "type": "string"
+          "type": "string",
+          "description": "Full name of the user's direct manager"
         }
       },
       "additionalProperties": false,

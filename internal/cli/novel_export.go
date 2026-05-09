@@ -137,121 +137,121 @@ Run 'sync' first to populate the store.`,
 // --- export types ---
 
 type exportProfile struct {
-	ExportedAt   string            `json:"exported_at"`
-	Profile      exportUser        `json:"profile"`
-	Objectives   []exportObjective `json:"objectives"`
-	Oneonones    []exportMeeting   `json:"oneonones"`
-	Recognitions exportRecognition `json:"recognitions"`
-	Reviews      []exportReview    `json:"reviews"`
+	ExportedAt   string            `json:"exported_at" jsonschema:"description=ISO 8601 timestamp of when this export was generated"`
+	Profile      exportUser        `json:"profile" jsonschema:"description=The authenticated user's profile information"`
+	Objectives   []exportObjective `json:"objectives" jsonschema:"description=OKRs where the user is an owner, stakeholder, or follower"`
+	Oneonones    []exportMeeting   `json:"oneonones" jsonschema:"description=1:1 meeting history with full Q&A from both participants"`
+	Recognitions exportRecognition `json:"recognitions" jsonschema:"description=Recognition badges sent and received"`
+	Reviews      []exportReview    `json:"reviews" jsonschema:"description=Completed performance review cycles"`
 }
 
 type exportUser struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	Email    string `json:"email,omitempty"`
-	Position string `json:"position,omitempty"`
-	HireDate string `json:"hire_date,omitempty"`
-	Manager  string `json:"manager,omitempty"`
+	ID       int    `json:"id" jsonschema:"description=7Geese user profile ID"`
+	Name     string `json:"name" jsonschema:"description=Full name"`
+	Email    string `json:"email,omitempty" jsonschema:"description=Work email address"`
+	Position string `json:"position,omitempty" jsonschema:"description=Job title or position"`
+	HireDate string `json:"hire_date,omitempty" jsonschema:"description=Date the user joined the organisation (YYYY-MM-DD)"`
+	Manager  string `json:"manager,omitempty" jsonschema:"description=Full name of the user's direct manager"`
 }
 
 type exportObjective struct {
-	ID              string          `json:"id"`
-	Name            string          `json:"name"`
-	Description     string          `json:"description,omitempty"`
-	Type            string          `json:"type"`
-	ParticipantType string          `json:"participant_type,omitempty"`
-	Progress        float64         `json:"progress"`
-	StartDate       string          `json:"start_date,omitempty"`
-	DueDate         string          `json:"due_date,omitempty"`
-	CompletedDate   string          `json:"completed_date,omitempty"`
-	Closed          bool            `json:"closed"`
-	KeyResults      []exportKR      `json:"key_results,omitempty"`
-	Checkins        []exportCheckin `json:"checkins,omitempty"`
+	ID              string          `json:"id" jsonschema:"description=Objective ID"`
+	Name            string          `json:"name" jsonschema:"description=Objective title"`
+	Description     string          `json:"description,omitempty" jsonschema:"description=Optional longer description of the objective"`
+	Type            string          `json:"type" jsonschema:"description=Scope of the objective: personal, team, or org"`
+	ParticipantType string          `json:"participant_type,omitempty" jsonschema:"description=The user's role on this objective: owner, stakeholder, or follower"`
+	Progress        float64         `json:"progress" jsonschema:"description=Overall completion percentage (0–100)"`
+	StartDate       string          `json:"start_date,omitempty" jsonschema:"description=Objective start date (YYYY-MM-DD)"`
+	DueDate         string          `json:"due_date,omitempty" jsonschema:"description=Objective due date (YYYY-MM-DD)"`
+	CompletedDate   string          `json:"completed_date,omitempty" jsonschema:"description=Date the objective was marked complete (YYYY-MM-DD)"`
+	Closed          bool            `json:"closed" jsonschema:"description=Whether the objective is closed (completed or abandoned)"`
+	KeyResults      []exportKR      `json:"key_results,omitempty" jsonschema:"description=Key results nested under this objective"`
+	Checkins        []exportCheckin `json:"checkins,omitempty" jsonschema:"description=Most recent progress check-in"`
 }
 
 type exportKR struct {
-	ID              string  `json:"id"`
-	Name            string  `json:"name"`
-	Description     string  `json:"description,omitempty"`
-	Progress        float64 `json:"progress"`
-	MeasurementType string  `json:"measurement_type,omitempty"`
-	CurrentValue    float64 `json:"current_value"`
-	TargetValue     float64 `json:"target_value"`
+	ID              string  `json:"id" jsonschema:"description=Key result ID"`
+	Name            string  `json:"name" jsonschema:"description=Key result title"`
+	Description     string  `json:"description,omitempty" jsonschema:"description=Optional longer description"`
+	Progress        float64 `json:"progress" jsonschema:"description=Completion percentage (0–100)"`
+	MeasurementType string  `json:"measurement_type,omitempty" jsonschema:"description=How progress is measured: percent, number, currency, or boolean"`
+	CurrentValue    float64 `json:"current_value" jsonschema:"description=Current measured value"`
+	TargetValue     float64 `json:"target_value" jsonschema:"description=Target value to reach 100% completion"`
 }
 
 type exportCheckin struct {
-	ID               string  `json:"id"`
-	Date             string  `json:"date"`
-	Message          string  `json:"message,omitempty"`
-	ProgressSnapshot float64 `json:"progress_at_checkin,omitempty"`
+	ID               string  `json:"id" jsonschema:"description=Check-in ID"`
+	Date             string  `json:"date" jsonschema:"description=Date the check-in was posted (ISO 8601)"`
+	Message          string  `json:"message,omitempty" jsonschema:"description=Free-text update posted with this check-in"`
+	ProgressSnapshot float64 `json:"progress_at_checkin,omitempty" jsonschema:"description=Progress percentage recorded at the time of this check-in"`
 }
 
 type exportMeeting struct {
-	ID        string     `json:"id"`
-	Date      string     `json:"date"`
-	With      string     `json:"with"`
-	Status    string     `json:"status"`
-	Questions []exportQA `json:"questions,omitempty"`
+	ID        string     `json:"id" jsonschema:"description=1:1 meeting ID"`
+	Date      string     `json:"date" jsonschema:"description=Scheduled date and time of the meeting (ISO 8601)"`
+	With      string     `json:"with" jsonschema:"description=Full name of the other participant"`
+	Status    string     `json:"status" jsonschema:"description=Meeting status: completed or upcoming"`
+	Questions []exportQA `json:"questions,omitempty" jsonschema:"description=Questions and answers from both participants"`
 }
 
 type exportQA struct {
-	Question string         `json:"question"`
-	Hint     string         `json:"hint,omitempty"`
-	Answers  []exportAnswer `json:"answers"`
+	Question string         `json:"question" jsonschema:"description=The question text"`
+	Hint     string         `json:"hint,omitempty" jsonschema:"description=Optional guidance or sub-prompt shown under the question"`
+	Answers  []exportAnswer `json:"answers" jsonschema:"description=Answers submitted by each participant"`
 }
 
 type exportAnswer struct {
-	Author string `json:"author"`
-	Text   string `json:"text"`
+	Author string `json:"author" jsonschema:"description=Full name of the person who wrote this answer"`
+	Text   string `json:"text" jsonschema:"description=The answer text"`
 }
 
 type exportRecognition struct {
-	Received []exportBadge `json:"received"`
-	Given    []exportBadge `json:"given"`
+	Received []exportBadge `json:"received" jsonschema:"description=Badges the user received from others"`
+	Given    []exportBadge `json:"given" jsonschema:"description=Badges the user sent to others"`
 }
 
 type exportReview struct {
-	ID           int                   `json:"id"`
-	Title        string                `json:"title"`
-	Period       string                `json:"period"`
-	StartDate    string                `json:"start_date"`
-	EndDate      string                `json:"end_date"`
-	State        string                `json:"state"`
-	Position     string                `json:"position,omitempty"`
-	Manager      string                `json:"manager,omitempty"`
-	Sections     []exportReviewSection `json:"sections,omitempty"`
-	PeerFeedback *exportPeerReport     `json:"peer_feedback,omitempty"`
+	ID           int                   `json:"id" jsonschema:"description=Performance review cycle ID"`
+	Title        string                `json:"title" jsonschema:"description=Name of the review cycle (e.g. 'Q1 2026 Performance Review')"`
+	Period       string                `json:"period" jsonschema:"description=Human-readable quarter label derived from the start date (e.g. Q1 2026)"`
+	StartDate    string                `json:"start_date" jsonschema:"description=Review period start date (ISO 8601)"`
+	EndDate      string                `json:"end_date" jsonschema:"description=Review period end date (ISO 8601)"`
+	State        string                `json:"state" jsonschema:"description=Workflow state of the review cycle"`
+	Position     string                `json:"position,omitempty" jsonschema:"description=The user's job title at the time of the review"`
+	Manager      string                `json:"manager,omitempty" jsonschema:"description=Full name of the user's manager for this review"`
+	Sections     []exportReviewSection `json:"sections,omitempty" jsonschema:"description=Review form sections containing questions and answers"`
+	PeerFeedback *exportPeerReport     `json:"peer_feedback,omitempty" jsonschema:"description=Curated peer feedback report if one was published for this cycle"`
 }
 
 type exportReviewSection struct {
-	Title string           `json:"title"`
-	Items []exportReviewQA `json:"items"`
+	Title string           `json:"title" jsonschema:"description=Section heading"`
+	Items []exportReviewQA `json:"items" jsonschema:"description=Questions and answers within this section"`
 }
 
 type exportReviewQA struct {
-	Question string `json:"question"`
-	Employee string `json:"employee,omitempty"`
-	Manager  string `json:"manager,omitempty"`
+	Question string `json:"question" jsonschema:"description=The review question text"`
+	Employee string `json:"employee,omitempty" jsonschema:"description=The employee's answer"`
+	Manager  string `json:"manager,omitempty" jsonschema:"description=The manager's response"`
 }
 
 type exportPeerReport struct {
-	Title     string               `json:"title"`
-	Published string               `json:"published,omitempty"`
-	Questions []exportPeerQuestion `json:"questions,omitempty"`
-}
-
-type exportPeerQuestion struct {
-	Question string   `json:"question"`
-	Answers  []string `json:"answers,omitempty"`
+	Title     string               `json:"title" jsonschema:"description=Title of the peer feedback request"`
+	Published string               `json:"published,omitempty" jsonschema:"description=Date the curated report was published (ISO 8601)"`
+	Questions []exportPeerQuestion `json:"questions,omitempty" jsonschema:"description=Questions with anonymised peer answers"`
 }
 
 type exportBadge struct {
-	ID      string `json:"id"`
-	Date    string `json:"date"`
-	From    string `json:"from,omitempty"`
-	To      string `json:"to,omitempty"`
-	Badge   string `json:"badge,omitempty"`
-	Message string `json:"message,omitempty"`
+	ID      string `json:"id" jsonschema:"description=Badge event ID"`
+	Date    string `json:"date" jsonschema:"description=Date the recognition was given (ISO 8601)"`
+	From    string `json:"from,omitempty" jsonschema:"description=Full name of the person who gave the badge"`
+	To      string `json:"to,omitempty" jsonschema:"description=Full name of the person who received the badge"`
+	Badge   string `json:"badge,omitempty" jsonschema:"description=Name of the badge awarded"`
+	Message string `json:"message,omitempty" jsonschema:"description=Personal message included with the badge"`
+}
+
+type exportPeerQuestion struct {
+	Question string   `json:"question" jsonschema:"description=The peer feedback question text"`
+	Answers  []string `json:"answers,omitempty" jsonschema:"description=Anonymised answers submitted by peers"`
 }
 
 // --- builders ---
