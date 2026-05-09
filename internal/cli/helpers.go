@@ -1280,6 +1280,10 @@ func defaultDBPath(name string) string {
 	return filepath.Join(home, ".local", "share", name, "data.db")
 }
 
+// sharedStdin is a single reader over os.Stdin shared across all promptConfirm
+// calls so that sequential prompts don't lose input to buffer over-read.
+var sharedStdin = bufio.NewReader(os.Stdin)
+
 // promptConfirm prints prompt to stderr and reads a Y/n response.
 // Returns true if the user confirms (or --yes is set); false on 'n', EOF, or --no-input.
 func promptConfirm(cmd *cobra.Command, flags *rootFlags, prompt string) bool {
@@ -1291,10 +1295,7 @@ func promptConfirm(cmd *cobra.Command, flags *rootFlags, prompt string) bool {
 		return true
 	}
 	fmt.Fprint(cmd.ErrOrStderr(), prompt)
-	scanner := bufio.NewScanner(os.Stdin)
-	if !scanner.Scan() {
-		return false
-	}
-	resp := strings.ToLower(strings.TrimSpace(scanner.Text()))
+	line, _ := sharedStdin.ReadString('\n')
+	resp := strings.ToLower(strings.TrimSpace(line))
 	return resp == "" || resp == "y" || resp == "yes"
 }
