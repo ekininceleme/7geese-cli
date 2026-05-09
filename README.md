@@ -4,48 +4,23 @@ Export your 7Geese performance data — objectives, 1:1s, recognitions, and revi
 
 7Geese has no API tokens and no official CLI. This tool reads your existing browser session, syncs your data to a local SQLite store, and exports everything to a single JSON file.
 
-## Platform support
-
-Pre-built binaries are available for macOS, Linux, and Windows (amd64 and arm64).
-
-`auth login` reads cookies from Chrome's encrypted store. The mechanism differs by OS:
-
-| Platform | How cookies are decrypted | Notes |
-|----------|--------------------------|-------|
-| **macOS** | macOS Keychain | **Triggers a permission dialog** — click Allow when prompted |
-| **Linux** | GNOME Keyring or KDE KWallet | Requires a running secret service (standard on GNOME/KDE desktops) |
-| **Windows** | Windows DPAPI | Works on most Chrome versions; see troubleshooting if it fails |
-
-Firefox is also supported on all platforms. Safari is macOS only.
-
 ## Install
-
-### macOS (Homebrew)
 
 ```bash
 brew tap ekininceleme/tap
 brew install sevengeese-cli
 ```
 
-### Linux / Windows
+Or download a pre-built binary for macOS, Linux, or Windows from the [latest release](https://github.com/ekininceleme/7geese-cli/releases/latest). On macOS, clear the quarantine flag after downloading:
 
-Download a pre-built binary from the [latest release](https://github.com/ekininceleme/7geese-cli/releases/latest).
-
-On macOS (direct download only, not Homebrew), clear the quarantine flag:
 ```bash
 xattr -d com.apple.quarantine 7geese-cli && chmod +x 7geese-cli
-```
-
-On Linux, mark it executable:
-```bash
-chmod +x 7geese-cli
 ```
 
 ## Quick start
 
 ```bash
 # 1. Log in using your existing Chrome session (must be logged into app.7geese.com)
-#    On macOS this will prompt for Keychain access — click Allow
 7geese-cli auth login
 
 # 2. Sync your data to a local database
