@@ -1,0 +1,427 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/exportProfile",
+  "$defs": {
+    "exportAnswer": {
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "author",
+        "text"
+      ]
+    },
+    "exportBadge": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "badge": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "date"
+      ]
+    },
+    "exportCheckin": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "progress_at_checkin": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "date"
+      ]
+    },
+    "exportKR": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "measurement_type": {
+          "type": "string"
+        },
+        "current_value": {
+          "type": "number"
+        },
+        "target_value": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "progress",
+        "current_value",
+        "target_value"
+      ]
+    },
+    "exportMeeting": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "with": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/exportQA"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "date",
+        "with",
+        "status"
+      ]
+    },
+    "exportObjective": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "participant_type": {
+          "type": "string"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "start_date": {
+          "type": "string"
+        },
+        "due_date": {
+          "type": "string"
+        },
+        "completed_date": {
+          "type": "string"
+        },
+        "closed": {
+          "type": "boolean"
+        },
+        "key_results": {
+          "items": {
+            "$ref": "#/$defs/exportKR"
+          },
+          "type": "array"
+        },
+        "checkins": {
+          "items": {
+            "$ref": "#/$defs/exportCheckin"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "type",
+        "progress",
+        "closed"
+      ]
+    },
+    "exportPeerQuestion": {
+      "properties": {
+        "question": {
+          "type": "string"
+        },
+        "answers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "question"
+      ]
+    },
+    "exportPeerReport": {
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "published": {
+          "type": "string"
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/exportPeerQuestion"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "title"
+      ]
+    },
+    "exportProfile": {
+      "properties": {
+        "exported_at": {
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/exportUser"
+        },
+        "objectives": {
+          "items": {
+            "$ref": "#/$defs/exportObjective"
+          },
+          "type": "array"
+        },
+        "oneonones": {
+          "items": {
+            "$ref": "#/$defs/exportMeeting"
+          },
+          "type": "array"
+        },
+        "recognitions": {
+          "$ref": "#/$defs/exportRecognition"
+        },
+        "reviews": {
+          "items": {
+            "$ref": "#/$defs/exportReview"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exported_at",
+        "profile",
+        "objectives",
+        "oneonones",
+        "recognitions",
+        "reviews"
+      ]
+    },
+    "exportQA": {
+      "properties": {
+        "question": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        },
+        "answers": {
+          "items": {
+            "$ref": "#/$defs/exportAnswer"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "question",
+        "answers"
+      ]
+    },
+    "exportRecognition": {
+      "properties": {
+        "received": {
+          "items": {
+            "$ref": "#/$defs/exportBadge"
+          },
+          "type": "array"
+        },
+        "given": {
+          "items": {
+            "$ref": "#/$defs/exportBadge"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "received",
+        "given"
+      ]
+    },
+    "exportReview": {
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "period": {
+          "type": "string"
+        },
+        "start_date": {
+          "type": "string"
+        },
+        "end_date": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "position": {
+          "type": "string"
+        },
+        "manager": {
+          "type": "string"
+        },
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/exportReviewSection"
+          },
+          "type": "array"
+        },
+        "peer_feedback": {
+          "$ref": "#/$defs/exportPeerReport"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "period",
+        "start_date",
+        "end_date",
+        "state"
+      ]
+    },
+    "exportReviewQA": {
+      "properties": {
+        "question": {
+          "type": "string"
+        },
+        "employee": {
+          "type": "string"
+        },
+        "manager": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "question"
+      ]
+    },
+    "exportReviewSection": {
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/exportReviewQA"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "title",
+        "items"
+      ]
+    },
+    "exportUser": {
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "position": {
+          "type": "string"
+        },
+        "hire_date": {
+          "type": "string"
+        },
+        "manager": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "name"
+      ]
+    }
+  }
+}

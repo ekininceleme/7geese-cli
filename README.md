@@ -79,6 +79,17 @@ The JSON output contains:
 - **recognitions** — Recognition badges you sent or received
 - **reviews** — Completed performance review snapshots with your answers and your manager's responses, including peer feedback
 
+### `me schema`
+
+Prints the JSON Schema for the output of `me export`. Useful for AI agents and tooling that need to understand the data shape before consuming it.
+
+```bash
+7geese-cli me schema
+7geese-cli me schema | jq '.properties.objectives'
+```
+
+The schema is also committed to the repo at [`schema/export.json`](schema/export.json).
+
 ### `doctor`
 
 Checks that authentication and connectivity are working.

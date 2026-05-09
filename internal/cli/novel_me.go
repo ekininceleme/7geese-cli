@@ -18,6 +18,7 @@ func newMeCmd(flags *rootFlags) *cobra.Command {
 	}
 	cmd.AddCommand(newMeWeekCmd(flags))
 	cmd.AddCommand(newMeExportCmd(flags))
+	cmd.AddCommand(newMeSchemaCmd(flags))
 	return cmd
 }
 
@@ -135,9 +136,9 @@ Use --json for agent-friendly structured output.`,
 			oneononeRows.Close()
 
 			type weekSummary struct {
-				WeekOf     string         `json:"week_of"`
-				Checkins   []checkinItem  `json:"checkins_this_week"`
-				StaleOKRs  []okrItem      `json:"okrs_not_updated_this_week"`
+				WeekOf        string         `json:"week_of"`
+				Checkins      []checkinItem  `json:"checkins_this_week"`
+				StaleOKRs     []okrItem      `json:"okrs_not_updated_this_week"`
 				Upcoming1on1s []oneononeItem `json:"upcoming_1on1s"`
 			}
 			summary := weekSummary{
