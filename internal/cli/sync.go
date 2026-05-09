@@ -257,76 +257,68 @@ Exit codes & warnings:
 				}
 			}
 
-			// Post-sync steps: targeted fetches scoped to the current user.
-			// profileID resolved above from /status/.
-
-			// Current user's profile + manager's profile (2 direct GETs).
-			if profileID > 0 {
-				if humanFriendly {
-					fmt.Fprintln(os.Stderr, "syncing user profile...")
-				}
-				t0 := time.Now()
-				pErr := syncCurrentUserProfile(flags, db, profileID)
-				if pErr != nil && humanFriendly {
-					fmt.Fprintf(os.Stderr, "  userprofile: warning: %v (%dms)\n", pErr, time.Since(t0).Milliseconds())
-				} else if humanFriendly {
-					fmt.Fprintf(os.Stderr, "  userprofile: synced (self + manager) (%dms)\n", time.Since(t0).Milliseconds())
-				}
-			}
-
-			// Recognition badges: two filtered REST passes (sender + recipient).
-			if profileID > 0 {
-				if humanFriendly {
-					fmt.Fprintln(os.Stderr, "syncing recognition badges (sent + received)...")
-				}
-				t0 := time.Now()
-				rCount, rErr := syncUserRecognition(flags, db, profileID)
-				if rErr != nil && humanFriendly {
-					fmt.Fprintf(os.Stderr, "  recognitionbadges: warning: %v (%dms)\n", rErr, time.Since(t0).Milliseconds())
-				} else if humanFriendly {
-					fmt.Fprintf(os.Stderr, "  recognitionbadges: %d synced (%dms)\n", rCount, time.Since(t0).Milliseconds())
-				}
-			}
-
-			// Finalized 1:1 meetings via GraphQL (both participants' notes).
+			// Post-sync: all user-scoped fetches run concurrently — they are
+			// independent of each other and only require profileID to be known.
 			if humanFriendly {
-				fmt.Fprintln(os.Stderr, "syncing finalized 1:1 meetings...")
-			}
-			t0 := time.Now()
-			fCount, fErr := syncFinalizedMeetings(flags, db, full)
-			if fErr != nil && humanFriendly {
-				fmt.Fprintf(os.Stderr, "  finalized_oneonones: warning: %v (%dms)\n", fErr, time.Since(t0).Milliseconds())
-			} else if humanFriendly {
-				fmt.Fprintf(os.Stderr, "  finalized_oneonones: %d synced (%dms)\n", fCount, time.Since(t0).Milliseconds())
+				fmt.Fprintln(os.Stderr, "syncing personal data...")
 			}
 
-			// User objectives via GraphQL (owner filter, not creator).
-			if profileID > 0 {
-				if humanFriendly {
-					fmt.Fprintln(os.Stderr, "syncing user objectives...")
-				}
-				t0 := time.Now()
-				oCount, oErr := syncUserObjectives(flags, db, profileID, full)
-				if oErr != nil && humanFriendly {
-					fmt.Fprintf(os.Stderr, "  user_objectives: warning: %v (%dms)\n", oErr, time.Since(t0).Milliseconds())
-				} else if humanFriendly {
-					fmt.Fprintf(os.Stderr, "  user_objectives: %d synced (%dms)\n", oCount, time.Since(t0).Milliseconds())
-				}
+			type novelTask struct {
+				name string
+				fn   func() (int, error)
+			}
+			type novelResult struct {
+				name  string
+				count int
+				err   error
+				dur   time.Duration
 			}
 
-			// Review snapshots via GraphQL (full self-assessment + manager feedback).
+			var novelTasks []novelTask
 			if profileID > 0 {
-				if humanFriendly {
-					fmt.Fprintln(os.Stderr, "syncing review snapshots...")
+				novelTasks = append(novelTasks,
+					novelTask{"userprofile", func() (int, error) {
+						if err := syncCurrentUserProfile(flags, db, profileID); err != nil {
+							return 0, err
+						}
+						return 1, nil
+					}},
+					novelTask{"recognitionbadges", func() (int, error) {
+						return syncUserRecognition(flags, db, profileID)
+					}},
+					novelTask{"user_objectives", func() (int, error) {
+						return syncUserObjectives(flags, db, profileID, full)
+					}},
+					novelTask{"user_snapshots", func() (int, error) {
+						return syncUserSnapshots(flags, db, profileID, full)
+					}},
+				)
+			}
+			novelTasks = append(novelTasks, novelTask{"finalized_oneonones", func() (int, error) {
+				return syncFinalizedMeetings(flags, db, full)
+			}})
+
+			novelResultCh := make(chan novelResult, len(novelTasks))
+			var novelWg sync.WaitGroup
+			for _, nt := range novelTasks {
+				novelWg.Add(1)
+				go func(t novelTask) {
+					defer novelWg.Done()
+					t0 := time.Now()
+					count, err := t.fn()
+					novelResultCh <- novelResult{name: t.name, count: count, err: err, dur: time.Since(t0)}
+				}(nt)
+			}
+			go func() { novelWg.Wait(); close(novelResultCh) }()
+
+			for r := range novelResultCh {
+				if !humanFriendly {
+					continue
 				}
-				t0 := time.Now()
-				sCount, sErr := syncUserSnapshots(flags, db, profileID, full)
-				if sErr != nil && humanFriendly {
-					fmt.Fprintf(os.Stderr, "\r  user_snapshots: warning: %v (%dms)\n", sErr, time.Since(t0).Milliseconds())
-				} else if humanFriendly && sCount == 0 {
-					fmt.Fprintf(os.Stderr, "  user_snapshots: already up to date (%dms)\n", time.Since(t0).Milliseconds())
-				} else if humanFriendly {
-					fmt.Fprintf(os.Stderr, "\r  user_snapshots: %d synced (%dms)\n", sCount, time.Since(t0).Milliseconds())
+				if r.err != nil {
+					fmt.Fprintf(os.Stderr, "  %s: warning: %v (%dms)\n", r.name, r.err, r.dur.Milliseconds())
+				} else {
+					fmt.Fprintf(os.Stderr, "  %s: %d synced (%dms)\n", r.name, r.count, r.dur.Milliseconds())
 				}
 			}
 

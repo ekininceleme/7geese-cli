@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 
@@ -1394,17 +1393,12 @@ func syncUserSnapshots(flags *rootFlags, db *store.Store, profileID int, force b
 	}()
 
 	synced := 0
-	total := len(toFetch)
 	for r := range resultCh {
 		if err := db.Upsert("user_snapshots", r.id, r.data); err != nil {
 			continue
 		}
 		synced++
-		if humanFriendly {
-			fmt.Fprintf(os.Stderr, "\r  user_snapshots: %d/%d done...", synced, total)
-		}
 	}
-	// Leave cursor on the progress line; caller overwrites it with the final summary.
 	return synced, nil
 }
 
