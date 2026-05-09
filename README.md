@@ -66,7 +66,11 @@ Exports all your performance data to a single JSON file.
 7geese-cli me export --since 2025-01-01 > 2025-data.json
 ```
 
-If you haven't run `auth login` or `sync` yet, `me export` will prompt you to do both automatically.
+If you haven't run `auth login` or `sync` yet, `me export` will prompt you to do both automatically. In a non-interactive context (AI agent, CI, script) the prompts are skipped and the command fails with a clear error — pass `--yes` to auto-confirm instead:
+
+```bash
+7geese-cli me export --yes > my-data.json
+```
 
 The JSON output contains:
 
@@ -88,6 +92,8 @@ Checks that authentication and connectivity are working.
 | Flag | Description |
 |------|-------------|
 | `--since <date>` | Only include data on or after this date (format: `YYYY-MM-DD`). For objectives: always includes open ones; for closed ones, filters by due date. |
+| `--yes` | Auto-confirm all prompts (auth login, sync). Useful for scripts and AI agents. |
+| `--no-input` | Disable all prompts and fail immediately if auth or data is missing. |
 | `--config <path>` | Use a custom config file path |
 
 ## Authentication details
