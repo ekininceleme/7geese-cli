@@ -123,6 +123,9 @@ func newDoctorCmd(flags *rootFlags) *cobra.Command {
 			authEnvOptionalSatisfied := false
 			if os.Getenv("SEVENGEESE_SESSION") != "" {
 				authEnvSet = append(authEnvSet, "SEVENGEESE_SESSION")
+			} else if cfg != nil && cfg.SevengeeseSession != "" {
+				// Session stored via auth login — env var is an optional alternative.
+				authEnvInfo = append(authEnvInfo, "SEVENGEESE_SESSION not set (session from auth login)")
 			} else {
 				authEnvRequiredMissing = append(authEnvRequiredMissing, "SEVENGEESE_SESSION")
 			}

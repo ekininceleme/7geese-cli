@@ -96,6 +96,17 @@ If your session expires, just run `auth login` again.
 
 Config is stored at `~/.config/7geese-cli/config.json`.
 
+### CI / headless environments
+
+If you can't run `auth login` (no Chrome, no keychain), set the session cookie directly via environment variable instead:
+
+```bash
+export SEVENGEESE_SESSION=<your-sgsession4-cookie-value>
+7geese-cli sync
+```
+
+To get the cookie value: open Chrome, log into app.7geese.com, open DevTools → Application → Cookies → `app.7geese.com`, and copy the value of `sgsession4`.
+
 ## Troubleshooting
 
 **macOS Keychain prompt** — Click Allow when macOS asks for keychain access during `auth login`. If you dismissed it, run `auth login` again.
