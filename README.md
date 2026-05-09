@@ -20,13 +20,15 @@ xattr -d com.apple.quarantine 7geese-cli && chmod +x 7geese-cli
 ## Quick start
 
 ```bash
-# 1. Log in using your existing browser session (Chrome or Firefox)
-7geese-cli auth login
+# Just run export — it will prompt to auth and sync if needed
+7geese-cli me export --output my-data.json
+```
 
-# 2. Sync your data to a local database
-7geese-cli sync
+Or step by step:
 
-# 3. Export everything to JSON
+```bash
+7geese-cli auth login   # read session from Chrome or Firefox
+7geese-cli sync         # pull data into a local database
 7geese-cli me export --output my-data.json
 ```
 
@@ -60,12 +62,15 @@ Exports all your performance data to a single JSON file.
 # Write to a file
 7geese-cli me export --output my-data.json
 
-# Print to stdout
-7geese-cli me export
+# Print to stdout (pipe to redirect)
+7geese-cli me export > my-data.json
+7geese-cli me export | jq '.objectives'
 
 # Only include data from 2025 onwards
 7geese-cli me export --since 2025-01-01 --output 2025-data.json
 ```
+
+If you haven't run `auth login` or `sync` yet, `me export` will prompt you to do both automatically.
 
 The JSON output contains:
 

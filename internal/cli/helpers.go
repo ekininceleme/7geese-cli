@@ -4,9 +4,14 @@
 package cli
 
 import (
+	"7geese-cli/internal/client"
+	"7geese-cli/internal/cliutil"
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,10 +21,6 @@ import (
 	"text/tabwriter"
 	"time"
 	"unicode"
-	"7geese-cli/internal/cliutil"
-	"7geese-cli/internal/client"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 var As = errors.As
@@ -93,11 +94,11 @@ type cliError struct {
 func (e *cliError) Error() string { return e.err.Error() }
 func (e *cliError) Unwrap() error { return e.err }
 
-func usageErr(err error) error    { return &cliError{code: 2, err: err} }
-func notFoundErr(err error) error { return &cliError{code: 3, err: err} }
-func authErr(err error) error     { return &cliError{code: 4, err: err} }
-func apiErr(err error) error      { return &cliError{code: 5, err: err} }
-func configErr(err error) error   { return &cliError{code: 10, err: err} }
+func usageErr(err error) error     { return &cliError{code: 2, err: err} }
+func notFoundErr(err error) error  { return &cliError{code: 3, err: err} }
+func authErr(err error) error      { return &cliError{code: 4, err: err} }
+func apiErr(err error) error       { return &cliError{code: 5, err: err} }
+func configErr(err error) error    { return &cliError{code: 10, err: err} }
 func rateLimitErr(err error) error { return &cliError{code: 7, err: err} }
 
 // dryRunOK reports whether the command should short-circuit without doing any
@@ -250,6 +251,7 @@ func classifyAPIError(err error, flags *rootFlags) error {
 		return apiErr(err)
 	}
 }
+
 // classifyDeleteError maps DELETE errors and supports explicit idempotent no-op handling.
 func classifyDeleteError(err error, flags *rootFlags) error {
 	msg := err.Error()
@@ -1169,12 +1171,13 @@ func findField(obj map[string]any, names ...string) string {
 	}
 	return ""
 }
+
 // DataProvenance describes where data came from and when it was last synced.
 type DataProvenance struct {
 	Source       string     `json:"source"`                  // "live" or "local"
-	SyncedAt    *time.Time `json:"synced_at,omitempty"`     // when local data was last synced
-	Reason      string     `json:"reason,omitempty"`        // why local was used: "user_requested", "api_unreachable", "no_search_endpoint"
-	ResourceType string    `json:"resource_type,omitempty"` // which resource type was queried
+	SyncedAt     *time.Time `json:"synced_at,omitempty"`     // when local data was last synced
+	Reason       string     `json:"reason,omitempty"`        // why local was used: "user_requested", "api_unreachable", "no_search_endpoint"
+	ResourceType string     `json:"resource_type,omitempty"` // which resource type was queried
 	Freshness    any        `json:"freshness,omitempty"`     // optional machine-owned freshness metadata for covered command paths
 }
 
@@ -1275,4 +1278,23 @@ func truncateJSONArray(data json.RawMessage, n int) json.RawMessage {
 func defaultDBPath(name string) string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "share", name, "data.db")
+}
+
+// promptConfirm prints prompt to stderr and reads a Y/n response.
+// Returns true if the user confirms (or --yes is set); false on 'n', EOF, or --no-input.
+func promptConfirm(cmd *cobra.Command, flags *rootFlags, prompt string) bool {
+	if flags.noInput {
+		return false
+	}
+	if flags.yes {
+		fmt.Fprint(cmd.ErrOrStderr(), prompt+"Y\n")
+		return true
+	}
+	fmt.Fprint(cmd.ErrOrStderr(), prompt)
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		return false
+	}
+	resp := strings.ToLower(strings.TrimSpace(scanner.Text()))
+	return resp == "" || resp == "y" || resp == "yes"
 }

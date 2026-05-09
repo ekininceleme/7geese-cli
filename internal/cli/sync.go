@@ -4,8 +4,12 @@
 package cli
 
 import (
+	"7geese-cli/internal/store"
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/spf13/cobra"
+	"io"
 	"net/url"
 	"os"
 	"regexp"
@@ -14,8 +18,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"7geese-cli/internal/store"
-	"github.com/spf13/cobra"
 )
 
 // syncResult holds the outcome of syncing a single resource.
@@ -790,8 +792,7 @@ type discriminatorDispatch struct {
 	Values map[string]string
 }
 
-var discriminatorDispatchers = map[string]discriminatorDispatch{
-}
+var discriminatorDispatchers = map[string]discriminatorDispatch{}
 
 func upsertResourceBatch(db *store.Store, resource string, items []json.RawMessage) (int, int, error) {
 	if _, ok := discriminatorDispatchers[resource]; !ok {
@@ -909,23 +910,23 @@ func defaultSyncResources() []string {
 // this preserves the actual endpoint path like "/ISteamApps/GetAppList/v2".
 func syncResourcePath(resource string) (string, error) {
 	paths := map[string]string{
-		"badges": "/api/v1/badges/",
-		"categories": "/api/v1/categories/",
-		"checkins": "/api/v1/checkins/",
-		"feedbackrequest": "/api/v1/feedbackrequest/",
-		"notifications": "/api/v1/notifications/",
-		"objectivekeyresults": "/api/v1/objectivekeyresults/",
-		"objectives": "/api/v1/objectives/",
-		"oneononenotes": "/api/v1/oneononenotes/",
-		"oneonones": "/api/v1/oneonones/",
+		"badges":                   "/api/v1/badges/",
+		"categories":               "/api/v1/categories/",
+		"checkins":                 "/api/v1/checkins/",
+		"feedbackrequest":          "/api/v1/feedbackrequest/",
+		"notifications":            "/api/v1/notifications/",
+		"objectivekeyresults":      "/api/v1/objectivekeyresults/",
+		"objectives":               "/api/v1/objectives/",
+		"oneononenotes":            "/api/v1/oneononenotes/",
+		"oneonones":                "/api/v1/oneonones/",
 		"organizationalobjectives": "/api/v1/organizationalobjectives/",
-		"peer_feedback": "/api/v1/feedback/",
-		"performancecycles": "/api/v1/performancecycles/",
-		"recognitionbadges": "/api/v1/recognitionbadges/",
-		"team": "/api/v1/team/",
-		"teamobjectives": "/api/v1/teamobjectives/",
-		"user": "/api/v1/user/",
-		"userprofile": "/api/v1/userprofile/",
+		"peer_feedback":            "/api/v1/feedback/",
+		"performancecycles":        "/api/v1/performancecycles/",
+		"recognitionbadges":        "/api/v1/recognitionbadges/",
+		"team":                     "/api/v1/team/",
+		"teamobjectives":           "/api/v1/teamobjectives/",
+		"user":                     "/api/v1/user/",
+		"userprofile":              "/api/v1/userprofile/",
 	}
 	if p, ok := paths[resource]; ok {
 		return p, nil
@@ -942,8 +943,7 @@ func syncResourcePath(resource string) (string, error) {
 // Includes both flat resources and dependent (parent-child) resources so
 // annotations on a child path-item are honored at runtime, not just on
 // flat paths.
-var resourceIDFieldOverrides = map[string]string{
-}
+var resourceIDFieldOverrides = map[string]string{}
 
 // genericIDFieldFallbacks is the runtime safety net for resources that did
 // NOT receive a templated IDField. API-specific names belong in spec
@@ -958,8 +958,7 @@ var genericIDFieldFallbacks = []string{"id", "ID", "name", "uuid", "slug", "key"
 // Includes both flat resources and dependent (parent-child) resources so a
 // failed child sync flagged x-critical: true exits non-zero just like a
 // flat-resource critical failure.
-var criticalResources = map[string]bool{
-}
+var criticalResources = map[string]bool{}
 
 // extractID resolves an item's primary-key field. It consults the
 // per-resource templated override first; on miss, it falls through to the
@@ -988,4 +987,112 @@ func extractID(resource string, obj map[string]any) string {
 		}
 	}
 	return ""
+}
+
+// doSync runs a full default sync with all resources and default options.
+// progress receives human-readable status lines; pass nil to suppress output.
+func doSync(ctx context.Context, flags *rootFlags, progress io.Writer) error {
+	c, err := flags.newClient()
+	if err != nil {
+		return err
+	}
+	c.NoCache = true
+
+	dbPath := defaultDBPath("7geese-cli")
+	db, err := store.OpenWithContext(ctx, dbPath)
+	if err != nil {
+		return fmt.Errorf("opening local database: %w", err)
+	}
+	defer db.Close()
+
+	resources := defaultSyncResources()
+	const concurrency = 4
+	const maxPages = 100
+
+	profileID, _ := fetchCurrentUserID(flags)
+
+	type syncJob struct {
+		resource    string
+		extraParams map[string]string
+	}
+	work := make(chan syncJob, len(resources))
+	results := make(chan syncResult, len(resources))
+
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range work {
+				results <- syncResource(c, db, job.resource, "", false, maxPages, job.extraParams)
+			}
+		}()
+	}
+	for _, r := range resources {
+		work <- syncJob{resource: r, extraParams: map[string]string{}}
+	}
+	close(work)
+	go func() { wg.Wait(); close(results) }()
+
+	for res := range results {
+		if progress == nil {
+			continue
+		}
+		if res.Err != nil {
+			fmt.Fprintf(progress, "  %s: error: %v\n", res.Resource, res.Err)
+		} else {
+			fmt.Fprintf(progress, "  %s: %d synced\n", res.Resource, res.Count)
+		}
+	}
+
+	type novelTask struct {
+		name string
+		fn   func() (int, error)
+	}
+	type novelResult struct {
+		name  string
+		count int
+		err   error
+	}
+	var novelTasks []novelTask
+	if profileID > 0 {
+		novelTasks = append(novelTasks,
+			novelTask{"userprofile", func() (int, error) {
+				if err := syncCurrentUserProfile(flags, db, profileID); err != nil {
+					return 0, err
+				}
+				return 1, nil
+			}},
+			novelTask{"recognitionbadges", func() (int, error) { return syncUserRecognition(flags, db, profileID) }},
+			novelTask{"user_objectives", func() (int, error) { return syncUserObjectives(flags, db, profileID, false) }},
+			novelTask{"user_snapshots", func() (int, error) { return syncUserSnapshots(flags, db, profileID, false) }},
+		)
+	}
+	novelTasks = append(novelTasks, novelTask{"finalized_oneonones", func() (int, error) {
+		return syncFinalizedMeetings(flags, db, false)
+	}})
+
+	novelResultCh := make(chan novelResult, len(novelTasks))
+	var novelWg sync.WaitGroup
+	for _, nt := range novelTasks {
+		novelWg.Add(1)
+		go func(t novelTask) {
+			defer novelWg.Done()
+			count, err := t.fn()
+			novelResultCh <- novelResult{name: t.name, count: count, err: err}
+		}(nt)
+	}
+	go func() { novelWg.Wait(); close(novelResultCh) }()
+
+	for r := range novelResultCh {
+		if progress == nil {
+			continue
+		}
+		if r.err != nil {
+			fmt.Fprintf(progress, "  %s: warning: %v\n", r.name, r.err)
+		} else {
+			fmt.Fprintf(progress, "  %s: %d synced\n", r.name, r.count)
+		}
+	}
+	return nil
 }

@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"7geese-cli/internal/config"
 	"7geese-cli/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -35,16 +37,63 @@ Sections included:
 
 Run 'sync' first to populate the store.`,
 		Example: `  7geese-cli me export
-  7geese-cli me export --output ekin-profile.json
+  7geese-cli me export --output my-data.json
+  7geese-cli me export | jq '.objectives'
   7geese-cli me export --user "Heather Moorhead"`,
 		Annotations: map[string]string{"mcp:read-only": "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Guided flow: check auth, then data, prompting to fix each if missing.
+			cfg, cfgErr := config.Load(flags.configPath)
+			if cfgErr == nil && cfg.SevengeeseSession == "" {
+				if !promptConfirm(cmd, flags, "Not authenticated. Run auth login now? [Y/n] ") {
+					return fmt.Errorf("not authenticated — run '7geese-cli auth login' first")
+				}
+				fmt.Fprintln(cmd.ErrOrStderr(), "Reading session from browser...")
+				browsers := resolveBrowsers(false, false, false)
+				session, csrf, _, authErr := extractSweetCookies(browsers)
+				if authErr != nil {
+					return fmt.Errorf("auth login failed: %w\nMake sure you are logged into app.7geese.com in Chrome or Firefox")
+				}
+				if err := cfg.SaveCookies(session, csrf); err != nil {
+					return fmt.Errorf("saving session: %w", err)
+				}
+				fmt.Fprintln(cmd.ErrOrStderr(), "Authenticated.")
+			}
+
 			if dbPath == "" {
 				dbPath = defaultDBPath("7geese-cli")
 			}
+
+			// Check if data exists; if not, offer to sync.
+			needsSync := false
+			db, openErr := store.OpenReadOnly(dbPath)
+			if openErr != nil {
+				needsSync = true
+			} else {
+				if _, err := resolveExportUser(db, userFilter); err != nil {
+					needsSync = true
+				}
+				db.Close()
+			}
+
+			if needsSync {
+				if !promptConfirm(cmd, flags, "No data found. Run sync now? [Y/n] ") {
+					return fmt.Errorf("no data — run '7geese-cli sync' first")
+				}
+				fmt.Fprintln(cmd.ErrOrStderr(), "Syncing...")
+				prevHumanFriendly := humanFriendly
+				humanFriendly = true
+				syncErr := doSync(context.Background(), flags, cmd.ErrOrStderr())
+				humanFriendly = prevHumanFriendly
+				if syncErr != nil {
+					return fmt.Errorf("sync failed: %w", syncErr)
+				}
+				fmt.Fprintln(cmd.ErrOrStderr(), "Sync complete.")
+			}
+
 			db, err := store.OpenReadOnly(dbPath)
 			if err != nil {
-				return fmt.Errorf("opening local database (run 'sync' first): %w", err)
+				return fmt.Errorf("opening local database: %w", err)
 			}
 			defer db.Close()
 
@@ -79,7 +128,7 @@ Run 'sync' first to populate the store.`,
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "", "Database path")
-	cmd.Flags().StringVarP(&output, "output", "o", "", "Output file path (default: stdout)")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Write JSON to a file (default: stdout — pipe to redirect)")
 	cmd.Flags().StringVar(&userFilter, "user", "", "User to export: name, email, or numeric ID (default: you)")
 	cmd.Flags().StringVar(&since, "since", "", "Inclusive start date (YYYY-MM-DD): exclude data older than this date")
 	return cmd
@@ -138,11 +187,11 @@ type exportCheckin struct {
 }
 
 type exportMeeting struct {
-	ID        string      `json:"id"`
-	Date      string      `json:"date"`
-	With      string      `json:"with"`
-	Status    string      `json:"status"`
-	Questions []exportQA  `json:"questions,omitempty"`
+	ID        string     `json:"id"`
+	Date      string     `json:"date"`
+	With      string     `json:"with"`
+	Status    string     `json:"status"`
+	Questions []exportQA `json:"questions,omitempty"`
 }
 
 type exportQA struct {
