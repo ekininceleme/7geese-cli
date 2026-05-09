@@ -77,8 +77,8 @@ Run 'sync' first to populate the store.`,
 			}
 
 			if needsSync {
-				if !promptConfirm(cmd, flags, "No data found. Run sync now? [Y/n] ") {
-					return fmt.Errorf("no data — run '7geese-cli sync' first")
+				if !promptConfirm(cmd, flags, "No local data found. Run sync to fetch from 7Geese now? [Y/n] ") {
+					return fmt.Errorf("no local data — run '7geese-cli sync' first")
 				}
 				fmt.Fprintln(cmd.ErrOrStderr(), "Syncing...")
 				prevHumanFriendly := humanFriendly
