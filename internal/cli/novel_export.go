@@ -370,7 +370,8 @@ func fetchExportUser(db *store.Store, profileID int) exportUser {
 	return u
 }
 
-func fetchExportObjectives(db *store.Store, _ int, since string) []exportObjective {
+func fetchExportObjectives(db *store.Store, profileID int, since string) []exportObjective {
+	resourceType := fmt.Sprintf("user_objectives:%d", profileID)
 	// When since is provided, include objectives whose period intersects [since, now]:
 	//   - open objectives are always included (still active)
 	//   - closed objectives where dueDatetime >= since (ended within or after the window)
@@ -383,10 +384,10 @@ func fetchExportObjectives(db *store.Store, _ int, since string) []exportObjecti
 	}
 	rows, err := db.Query(`
 		SELECT data FROM resources
-		WHERE resource_type = 'user_objectives'
+		WHERE resource_type = ?
 		  `+sinceClause+`
 		ORDER BY json_extract(data,'$.closed') ASC, json_extract(data,'$.dueDatetime') DESC
-	`, args...)
+	`, append([]any{resourceType}, args...)...)
 	if err != nil {
 		return nil
 	}
@@ -660,7 +661,8 @@ func fetchExportRecognition(db *store.Store, profileID int, since string) export
 	return rec
 }
 
-func fetchExportReviews(db *store.Store, _ int, since string) []exportReview {
+func fetchExportReviews(db *store.Store, profileID int, since string) []exportReview {
+	resourceType := fmt.Sprintf("user_snapshots:%d", profileID)
 	sinceClause := ""
 	var args []any
 	if since != "" {
@@ -669,10 +671,10 @@ func fetchExportReviews(db *store.Store, _ int, since string) []exportReview {
 	}
 	rows, err := db.Query(`
 		SELECT data FROM resources
-		WHERE resource_type = 'user_snapshots'
+		WHERE resource_type = ?
 		  `+sinceClause+`
 		ORDER BY json_extract(data,'$.startDate') DESC
-	`, args...)
+	`, append([]any{resourceType}, args...)...)
 	if err != nil {
 		return nil
 	}

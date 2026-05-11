@@ -17,9 +17,9 @@ import (
 // --- GraphQL types for review snapshots ---
 
 type gqlSnapshotSummary struct {
-	PK        int    `json:"pk"`
-	StartDate string `json:"startDate"`
-	EndDate   string `json:"endDate"`
+	PK            int    `json:"pk"`
+	StartDate     string `json:"startDate"`
+	EndDate       string `json:"endDate"`
 	SnapshotGroup struct {
 		PK    int    `json:"pk"`
 		Title string `json:"title"`
@@ -92,14 +92,14 @@ type gqlSnapshotFull struct {
 }
 
 type gqlPeerFeedbackRequest struct {
-	PK    int    `json:"pk"`
-	Title string `json:"title"`
+	PK            int    `json:"pk"`
+	Title         string `json:"title"`
 	CuratedReport *struct {
-		PublishedDatetime       string `json:"publishedDatetime"`
+		PublishedDatetime      string `json:"publishedDatetime"`
 		SortedCuratedQuestions struct {
 			Edges []struct {
 				Node struct {
-					Comment string          `json:"comment"`
+					Comment  string          `json:"comment"`
 					Question json.RawMessage `json:"question"`
 					Answers  struct {
 						Edges []struct {
@@ -1349,12 +1349,13 @@ func syncUserSnapshots(flags *rootFlags, db *store.Store, profileID int, force b
 		return 0, fmt.Errorf("listing snapshots: %w", err)
 	}
 
+	resourceType := fmt.Sprintf("user_snapshots:%d", profileID)
 	var toFetch []gqlSnapshotSummary
 	if force {
 		toFetch = summaries
 	} else {
 		for _, s := range summaries {
-			if existing, _ := db.Get("user_snapshots", fmt.Sprintf("%d", s.PK)); existing == nil {
+			if existing, _ := db.Get(resourceType, fmt.Sprintf("%d", s.PK)); existing == nil {
 				toFetch = append(toFetch, s)
 			}
 		}
@@ -1394,7 +1395,7 @@ func syncUserSnapshots(flags *rootFlags, db *store.Store, profileID int, force b
 
 	synced := 0
 	for r := range resultCh {
-		if err := db.Upsert("user_snapshots", r.id, r.data); err != nil {
+		if err := db.Upsert(resourceType, r.id, r.data); err != nil {
 			continue
 		}
 		synced++

@@ -330,6 +330,31 @@ Exit codes & warnings:
 				}
 			}
 
+			// Phase 3: sync objectives and snapshots for direct reports.
+			// userprofile was populated in phase 2, so direct report IDs are now in the DB.
+			if profileID > 0 {
+				reportIDs := fetchDirectReportIDs(db, profileID)
+				if len(reportIDs) > 0 && humanFriendly {
+					fmt.Fprintln(os.Stderr, "syncing direct reports data...")
+				}
+				for _, rid := range reportIDs {
+					if count, err := syncUserObjectives(flags, db, rid, full); err != nil {
+						if humanFriendly {
+							fmt.Fprintf(os.Stderr, "  report %d objectives: warning: %v\n", rid, err)
+						}
+					} else if humanFriendly {
+						fmt.Fprintf(os.Stderr, "  report %d objectives: %d synced\n", rid, count)
+					}
+					if count, err := syncUserSnapshots(flags, db, rid, full); err != nil {
+						if humanFriendly {
+							fmt.Fprintf(os.Stderr, "  report %d snapshots: warning: %v\n", rid, err)
+						}
+					} else if humanFriendly {
+						fmt.Fprintf(os.Stderr, "  report %d snapshots: %d synced\n", rid, count)
+					}
+				}
+			}
+
 			return nil
 		},
 	}

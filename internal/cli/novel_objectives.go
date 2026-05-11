@@ -60,7 +60,7 @@ func syncUserRecognition(flags *rootFlags, db *store.Store, profileID int) (int,
 	type restPage struct {
 		Objects []json.RawMessage `json:"objects"`
 		Meta    struct {
-			TotalCount int `json:"total_count"`
+			TotalCount int    `json:"total_count"`
 			Next       string `json:"next"`
 		} `json:"meta"`
 	}
@@ -206,19 +206,19 @@ type gqlObjectiveCheckin struct {
 }
 
 type gqlObjectiveNode struct {
-	PK                       int     `json:"pk"`
-	Name                     string  `json:"name"`
-	Description              string  `json:"description"`
-	Closed                   bool    `json:"closed"`
-	Draft                    bool    `json:"draft"`
-	Private                  bool    `json:"private"`
-	Progress                 float64 `json:"progress"`
-	DueDatetime              string  `json:"dueDatetime"`
-	StartDate                string  `json:"startDate"`
-	CompletedDatetime        string  `json:"completedDatetime"`
-	ObjectiveType            int     `json:"objectiveType"`
-	CurrentUserParticipantType int   `json:"currentUserParticipantType"`
-	Owners struct {
+	PK                         int     `json:"pk"`
+	Name                       string  `json:"name"`
+	Description                string  `json:"description"`
+	Closed                     bool    `json:"closed"`
+	Draft                      bool    `json:"draft"`
+	Private                    bool    `json:"private"`
+	Progress                   float64 `json:"progress"`
+	DueDatetime                string  `json:"dueDatetime"`
+	StartDate                  string  `json:"startDate"`
+	CompletedDatetime          string  `json:"completedDatetime"`
+	ObjectiveType              int     `json:"objectiveType"`
+	CurrentUserParticipantType int     `json:"currentUserParticipantType"`
+	Owners                     struct {
 		Edges []struct {
 			Node gqlObjectiveUser `json:"node"`
 		} `json:"edges"`
@@ -366,13 +366,38 @@ func syncCurrentUserProfile(flags *rootFlags, db *store.Store, profileID int) er
 		ReportsTo string `json:"reports_to"`
 	}
 	if json.Unmarshal(ownRaw, &profile) == nil && profile.ReportsTo != "" {
-		// Extract ID from URI like /api/v1/userprofile/1940957/
 		var managerID int
 		fmt.Sscanf(profile.ReportsTo, "/api/v1/userprofile/%d/", &managerID)
 		if managerID > 0 {
 			managerRaw, err := fetchProfile(managerID)
 			if err == nil {
 				_ = db.Upsert("userprofile", strconv.Itoa(managerID), managerRaw)
+			}
+		}
+	}
+
+	// Fetch direct reports' profiles so export can resolve them by user ID
+	reportsURL := cfg.BaseURL + fmt.Sprintf("/api/v1/userprofile/?reports_to=/api/v1/userprofile/%d/&limit=100", profileID)
+	req, err := http.NewRequest("GET", reportsURL, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Cookie", "sgsession4="+cfg.SevengeeseSession+"; sgcsrftoken4="+cfg.SevengeeseCSRF)
+	resp, err := syncHTTPClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var reportsPage struct {
+		Objects []json.RawMessage `json:"objects"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&reportsPage) == nil {
+		for _, raw := range reportsPage.Objects {
+			var p struct {
+				ID int `json:"id"`
+			}
+			if json.Unmarshal(raw, &p) == nil && p.ID > 0 {
+				_ = db.Upsert("userprofile", strconv.Itoa(p.ID), raw)
 			}
 		}
 	}
@@ -408,11 +433,12 @@ func syncUserObjectives(flags *rootFlags, db *store.Store, profileID int, force 
 		}
 	}
 
+	resourceType := fmt.Sprintf("user_objectives:%d", profileID)
 	synced := 0
 	for _, node := range all {
 		id := fmt.Sprintf("%d", node.PK)
 		if !force {
-			existing, _ := db.Get("user_objectives", id)
+			existing, _ := db.Get(resourceType, id)
 			if existing != nil {
 				continue
 			}
@@ -421,7 +447,7 @@ func syncUserObjectives(flags *rootFlags, db *store.Store, profileID int, force 
 		if err != nil {
 			continue
 		}
-		if err := db.Upsert("user_objectives", id, json.RawMessage(data)); err != nil {
+		if err := db.Upsert(resourceType, id, json.RawMessage(data)); err != nil {
 			continue
 		}
 		synced++
