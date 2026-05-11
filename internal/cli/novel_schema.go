@@ -18,7 +18,7 @@ func newMeSchemaCmd(_ *rootFlags) *cobra.Command {
   7geese-cli me schema | jq '.properties.objectives'`,
 		Annotations: map[string]string{"mcp:read-only": "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			schema := jsonschema.Reflect(&exportProfile{})
+			schema := jsonschema.Reflect(&exportOutput{})
 			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
 			return enc.Encode(schema)

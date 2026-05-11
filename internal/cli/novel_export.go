@@ -109,9 +109,6 @@ Run 'sync' first to populate the store.`,
 			for _, rid := range fetchDirectReportIDs(db, profileID) {
 				out.DirectReports = append(out.DirectReports, buildExportProfile(db, rid, since))
 			}
-			if out.DirectReports == nil {
-				out.DirectReports = []exportProfile{}
-			}
 
 			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
@@ -145,7 +142,7 @@ Run 'sync' first to populate the store.`,
 type exportOutput struct {
 	ExportedAt    string        `json:"exported_at" jsonschema:"description=ISO 8601 timestamp of when this export was generated"`
 	Me            exportProfile `json:"me" jsonschema:"description=The authenticated user's full profile and history"`
-	DirectReports []exportProfile `json:"direct_reports" jsonschema:"description=Direct reports with the same data shape as me"`
+	DirectReports []exportProfile `json:"direct_reports,omitempty" jsonschema:"description=Direct reports with the same data shape as me"`
 }
 
 type exportProfile struct {
