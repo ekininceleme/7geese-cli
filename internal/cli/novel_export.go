@@ -107,7 +107,9 @@ Run 'sync' first to populate the store.`,
 				Me:         buildExportProfile(db, profileID, since),
 			}
 			for _, rid := range fetchDirectReportIDs(db, profileID) {
-				out.DirectReports = append(out.DirectReports, buildExportProfile(db, rid, since))
+				p := buildExportProfile(db, rid, since)
+				p.Oneonones = nil
+				out.DirectReports = append(out.DirectReports, p)
 			}
 
 			enc := json.NewEncoder(cmd.OutOrStdout())
@@ -148,7 +150,7 @@ type exportOutput struct {
 type exportProfile struct {
 	Profile      exportUser        `json:"profile" jsonschema:"description=User profile information"`
 	Objectives   []exportObjective `json:"objectives" jsonschema:"description=OKRs where the user is an owner, stakeholder, or follower"`
-	Oneonones    []exportMeeting   `json:"oneonones" jsonschema:"description=1:1 meeting history with full Q&A from both participants"`
+	Oneonones    []exportMeeting   `json:"oneonones,omitempty" jsonschema:"description=1:1 meeting history with full Q&A from both participants"`
 	Recognitions exportRecognition `json:"recognitions" jsonschema:"description=Recognition badges sent and received"`
 	Reviews      []exportReview    `json:"reviews" jsonschema:"description=Completed performance review cycles"`
 }
