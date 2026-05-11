@@ -34,7 +34,7 @@ func IsUUID(s string) bool {
 // shape — adding columns, dropping indexes, changing FTS5 tokenizers —
 // so an older binary refuses to open a newer database rather than silently
 // producing wrong results against a schema it cannot read.
-const StoreSchemaVersion = 1
+const StoreSchemaVersion = 2
 
 type Store struct {
 	db *sql.DB
@@ -256,6 +256,22 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE VIRTUAL TABLE IF NOT EXISTS resources_fts USING fts5(
 			id, resource_type, content, tokenize='porter unicode61'
 		)`,
+		// Migration: change PRIMARY KEY from id alone to (resource_type, id)
+		// so multiple users can store records with the same id under different
+		// resource_types without collision. Idempotent: skipped if already done.
+		`CREATE TABLE IF NOT EXISTS resources_v2 (
+			id TEXT NOT NULL,
+			resource_type TEXT NOT NULL,
+			data JSON NOT NULL,
+			synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (resource_type, id)
+		)`,
+		`INSERT OR IGNORE INTO resources_v2 SELECT id, resource_type, data, synced_at, updated_at FROM resources`,
+		`DROP TABLE IF EXISTS resources`,
+		`ALTER TABLE resources_v2 RENAME TO resources`,
+		`CREATE INDEX IF NOT EXISTS idx_resources_type ON resources(resource_type)`,
+		`CREATE INDEX IF NOT EXISTS idx_resources_synced ON resources(synced_at)`,
 	}
 
 	// Run every migration — including the column backfill and the
@@ -414,7 +430,7 @@ func (s *Store) upsertGenericResourceTx(tx *sql.Tx, resourceType, id string, dat
 	_, err := tx.Exec(
 		`INSERT INTO resources (id, resource_type, data, synced_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET data = excluded.data, synced_at = excluded.synced_at, updated_at = excluded.updated_at`,
+		 ON CONFLICT(resource_type, id) DO UPDATE SET data = excluded.data, synced_at = excluded.synced_at, updated_at = excluded.updated_at`,
 		id, resourceType, string(data), time.Now(), time.Now(),
 	)
 	if err != nil {
@@ -593,8 +609,7 @@ func lookupFieldValue(obj map[string]any, snakeKey string) any {
 // Includes both flat resources and dependent (parent-child) resources so a
 // child path-item annotated with x-resource-id resolves the same as a flat
 // path-item.
-var resourceIDFieldOverrides = map[string]string{
-}
+var resourceIDFieldOverrides = map[string]string{}
 
 // genericIDFieldFallbacks is the runtime safety net for resources that did
 // NOT receive a templated IDField. API-specific names belong in spec
