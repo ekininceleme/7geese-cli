@@ -376,23 +376,38 @@ func syncCurrentUserProfile(flags *rootFlags, db *store.Store, profileID int) er
 		}
 	}
 
-	// Fetch direct reports' profiles so export can resolve them by user ID
-	reportsURL := cfg.BaseURL + fmt.Sprintf("/api/v1/userprofile/?reports_to=/api/v1/userprofile/%d/&limit=100", profileID)
-	req, err := http.NewRequest("GET", reportsURL, nil)
-	if err != nil {
-		return nil
-	}
-	req.Header.Set("Cookie", "sgsession4="+cfg.SevengeeseSession+"; sgcsrftoken4="+cfg.SevengeeseCSRF)
-	resp, err := syncHTTPClient.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	var reportsPage struct {
-		Objects []json.RawMessage `json:"objects"`
-	}
-	if json.NewDecoder(resp.Body).Decode(&reportsPage) == nil {
-		for _, raw := range reportsPage.Objects {
+	// Fetch direct reports' profiles so export can resolve them by user ID.
+	// Non-fatal: if this fails, sync still succeeds and direct_reports will be empty.
+	managerURI := fmt.Sprintf("/api/v1/userprofile/%d/", profileID)
+	offset := 0
+	const pageSize = 100
+	for {
+		reportsURL := cfg.BaseURL + fmt.Sprintf("/api/v1/userprofile/?reports_to=%s&limit=%d&offset=%d", managerURI, pageSize, offset)
+		req, err := http.NewRequest("GET", reportsURL, nil)
+		if err != nil {
+			break
+		}
+		req.Header.Set("Cookie", "sgsession4="+cfg.SevengeeseSession+"; sgcsrftoken4="+cfg.SevengeeseCSRF)
+		resp, err := syncHTTPClient.Do(req)
+		if err != nil {
+			break
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			break
+		}
+		var page struct {
+			Objects []json.RawMessage `json:"objects"`
+			Meta    struct {
+				Next string `json:"next"`
+			} `json:"meta"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
+		resp.Body.Close()
+		if decodeErr != nil {
+			break
+		}
+		for _, raw := range page.Objects {
 			var p struct {
 				ID int `json:"id"`
 			}
@@ -400,6 +415,10 @@ func syncCurrentUserProfile(flags *rootFlags, db *store.Store, profileID int) er
 				_ = db.Upsert("userprofile", strconv.Itoa(p.ID), raw)
 			}
 		}
+		if page.Meta.Next == "" || len(page.Objects) < pageSize {
+			break
+		}
+		offset += pageSize
 	}
 	return nil
 }
