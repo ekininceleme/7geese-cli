@@ -60,9 +60,17 @@ With no flag, Chrome is tried first, then Firefox.`,
 
 			fmt.Fprintf(w, "Reading 7Geese session from %s...\n", browserNames(browsers))
 
-			session, csrf, browser, err := extractSweetCookies(browsers)
+			session, csrf, browser, warnings, err := extractSweetCookies(browsers)
 			if err != nil {
 				fmt.Fprintln(w, red("Could not read session cookies."))
+				for _, warn := range warnings {
+					if strings.Contains(warn, "keychain") {
+						fmt.Fprintln(w, "")
+						fmt.Fprintf(w, "  Keychain error: %s\n", warn)
+						fmt.Fprintln(w, "  If macOS prompted for keychain access, click Allow and try again.")
+						fmt.Fprintln(w, "  Or open Keychain Access → look for 'Chrome Safe Storage' → grant access.")
+					}
+				}
 				fmt.Fprintln(w, "")
 				fmt.Fprintln(w, "Make sure you are logged into app.7geese.com in your browser, then try again:")
 				fmt.Fprintf(w, "  7geese-cli auth login --chrome\n")
@@ -93,8 +101,8 @@ With no flag, Chrome is tried first, then Firefox.`,
 	return cmd
 }
 
-// extractSweetCookies tries each browser in order and returns (session, csrf, browserName, error).
-func extractSweetCookies(browsers []sweetcookie.Browser) (string, string, string, error) {
+// extractSweetCookies tries each browser in order and returns (session, csrf, browserName, warnings, error).
+func extractSweetCookies(browsers []sweetcookie.Browser) (string, string, string, []string, error) {
 	res, err := sweetcookie.Get(context.Background(), sweetcookie.Options{
 		URL:      sevengeeseURL,
 		Names:    []string{sessionCookieName, csrfCookieName},
@@ -102,7 +110,7 @@ func extractSweetCookies(browsers []sweetcookie.Browser) (string, string, string
 		Mode:     sweetcookie.ModeFirst,
 	})
 	if err != nil {
-		return "", "", "", fmt.Errorf("sweetcookie: %w", err)
+		return "", "", "", nil, fmt.Errorf("sweetcookie: %w", err)
 	}
 
 	var session, csrf, browser string
@@ -117,9 +125,9 @@ func extractSweetCookies(browsers []sweetcookie.Browser) (string, string, string
 	}
 
 	if session == "" {
-		return "", "", "", fmt.Errorf("no %s cookie found for app.7geese.com — log in via Okta first", sessionCookieName)
+		return "", "", "", res.Warnings, fmt.Errorf("no %s cookie found for app.7geese.com — log in via Okta first", sessionCookieName)
 	}
-	return session, csrf, browser, nil
+	return session, csrf, browser, res.Warnings, nil
 }
 
 // resolveBrowsers returns the ordered list of browsers to try.
@@ -212,7 +220,7 @@ func newAuthLogoutCmd(flags *rootFlags) *cobra.Command {
 // TryRefreshSession attempts to re-read the 7Geese session from the browser.
 // Called automatically by the client on 401. Returns true if a new session was saved.
 func TryRefreshSession(configPath string) bool {
-	session, csrf, _, err := extractSweetCookies(
+	session, csrf, _, _, err := extractSweetCookies(
 		[]sweetcookie.Browser{sweetcookie.BrowserChrome, sweetcookie.BrowserFirefox},
 	)
 	if err != nil || session == "" {
