@@ -11,13 +11,20 @@ import (
 	"time"
 
 	"7geese-cli/internal/config"
+	"github.com/browserutils/kooky"
+	_ "github.com/browserutils/kooky/browser/chrome"
+	_ "github.com/browserutils/kooky/browser/firefox"
+	_ "github.com/browserutils/kooky/browser/safari"
 	"github.com/spf13/cobra"
-	"github.com/steipete/sweetcookie"
 )
 
 const sevengeeseURL = "https://app.7geese.com/"
 const sessionCookieName = "sgsession4"
 const csrfCookieName = "sgcsrftoken4"
+
+const browserChrome = "chrome"
+const browserFirefox = "firefox"
+const browserSafari = "safari"
 
 func newAuthCmd(flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
@@ -36,7 +43,7 @@ func newAuthLoginCmd(flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Read your 7Geese session from Chrome, Firefox, or Safari",
-		Long: `Reads your existing 7Geese browser session using sweetcookie.
+		Long: `Reads your existing 7Geese browser session using kooky.
 
 No API key is needed — just log into app.7geese.com via Okta in your browser.
 
@@ -56,21 +63,13 @@ With no flag, Chrome is tried first, then Firefox.`,
 
 			w := cmd.OutOrStdout()
 
-			browsers := resolveBrowsers(useChrome, useFirefox, useSafari)
+			browsers := resolveBrowserNames(useChrome, useFirefox, useSafari)
 
-			fmt.Fprintf(w, "Reading 7Geese session from %s...\n", browserNames(browsers))
+			fmt.Fprintf(w, "Reading 7Geese session from %s...\n", strings.Join(browsers, " then "))
 
-			session, csrf, browser, warnings, err := extractSweetCookies(browsers)
+			session, csrf, browser, err := extractKookyCookies(browsers)
 			if err != nil {
 				fmt.Fprintln(w, red("Could not read session cookies."))
-				for _, warn := range warnings {
-					if strings.Contains(warn, "keychain") {
-						fmt.Fprintln(w, "")
-						fmt.Fprintf(w, "  Keychain error: %s\n", warn)
-						fmt.Fprintln(w, "  If macOS prompted for keychain access, click Allow and try again.")
-						fmt.Fprintln(w, "  Or open Keychain Access → look for 'Chrome Safe Storage' → grant access.")
-					}
-				}
 				fmt.Fprintln(w, "")
 				fmt.Fprintln(w, "Make sure you are logged into app.7geese.com in your browser, then try again:")
 				fmt.Fprintf(w, "  7geese-cli auth login --chrome\n")
@@ -101,60 +100,71 @@ With no flag, Chrome is tried first, then Firefox.`,
 	return cmd
 }
 
-// extractSweetCookies tries each browser in order and returns (session, csrf, browserName, warnings, error).
-func extractSweetCookies(browsers []sweetcookie.Browser) (string, string, string, []string, error) {
-	res, err := sweetcookie.Get(context.Background(), sweetcookie.Options{
-		URL:      sevengeeseURL,
-		Names:    []string{sessionCookieName, csrfCookieName},
-		Browsers: browsers,
-		Mode:     sweetcookie.ModeFirst,
-	})
-	if err != nil {
-		return "", "", "", nil, fmt.Errorf("sweetcookie: %w", err)
+// extractKookyCookies reads the 7Geese session and CSRF cookies directly from
+// the browser's cookie store using kooky (CGO + Security.framework on macOS,
+// no subprocess). Returns (session, csrf, browserName, error).
+func extractKookyCookies(browsers []string) (string, string, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	browserSet := make(map[string]bool, len(browsers))
+	for _, b := range browsers {
+		browserSet[strings.ToLower(b)] = true
 	}
 
-	var session, csrf, browser string
-	for _, c := range res.Cookies {
-		switch c.Name {
+	filters := []kooky.Filter{
+		kooky.Valid,
+		kooky.DomainHasSuffix("7geese.com"),
+		kooky.FilterFunc(func(c *kooky.Cookie) bool {
+			if len(browsers) == 0 || c.Browser == nil {
+				return true
+			}
+			return browserSet[strings.ToLower(c.Browser.Browser())]
+		}),
+	}
+
+	var session, csrf, browserName string
+	for cookie := range kooky.TraverseCookies(ctx, filters...).OnlyCookies() {
+		switch cookie.Name {
 		case sessionCookieName:
-			session = c.Value
-			browser = string(c.Source.Browser)
+			if session == "" {
+				session = cookie.Value
+				if cookie.Browser != nil {
+					browserName = cookie.Browser.Browser()
+				}
+			}
 		case csrfCookieName:
-			csrf = c.Value
+			if csrf == "" {
+				csrf = cookie.Value
+			}
+		}
+		if session != "" && csrf != "" {
+			break
 		}
 	}
 
 	if session == "" {
-		return "", "", "", res.Warnings, fmt.Errorf("no %s cookie found for app.7geese.com — log in via Okta first", sessionCookieName)
+		return "", "", "", fmt.Errorf("no %s cookie found for app.7geese.com — log in via Okta first", sessionCookieName)
 	}
-	return session, csrf, browser, res.Warnings, nil
+	return session, csrf, browserName, nil
 }
 
-// resolveBrowsers returns the ordered list of browsers to try.
-func resolveBrowsers(chrome, firefox, safari bool) []sweetcookie.Browser {
+// resolveBrowserNames returns the ordered list of browser name strings to try.
+func resolveBrowserNames(chrome, firefox, safari bool) []string {
 	if !chrome && !firefox && !safari {
-		// Default: Chrome first, Firefox fallback
-		return []sweetcookie.Browser{sweetcookie.BrowserChrome, sweetcookie.BrowserFirefox}
+		return []string{browserChrome, browserFirefox}
 	}
-	var out []sweetcookie.Browser
+	var out []string
 	if chrome {
-		out = append(out, sweetcookie.BrowserChrome)
+		out = append(out, browserChrome)
 	}
 	if firefox {
-		out = append(out, sweetcookie.BrowserFirefox)
+		out = append(out, browserFirefox)
 	}
 	if safari {
-		out = append(out, sweetcookie.BrowserSafari)
+		out = append(out, browserSafari)
 	}
 	return out
-}
-
-func browserNames(browsers []sweetcookie.Browser) string {
-	names := make([]string, len(browsers))
-	for i, b := range browsers {
-		names[i] = string(b)
-	}
-	return strings.Join(names, " then ")
 }
 
 func newAuthStatusCmd(flags *rootFlags) *cobra.Command {
@@ -220,9 +230,7 @@ func newAuthLogoutCmd(flags *rootFlags) *cobra.Command {
 // TryRefreshSession attempts to re-read the 7Geese session from the browser.
 // Called automatically by the client on 401. Returns true if a new session was saved.
 func TryRefreshSession(configPath string) bool {
-	session, csrf, _, _, err := extractSweetCookies(
-		[]sweetcookie.Browser{sweetcookie.BrowserChrome, sweetcookie.BrowserFirefox},
-	)
+	session, csrf, _, err := extractKookyCookies([]string{browserChrome, browserFirefox})
 	if err != nil || session == "" {
 		return false
 	}

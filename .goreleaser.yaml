@@ -3,7 +3,18 @@ project_name: 7geese-cli
 changelog:
   disable: true
 builds:
-  - id: 7geese-cli
+  - id: 7geese-cli-darwin
+    main: ./cmd/7geese-pp-cli
+    binary: 7geese-cli
+    env:
+      - CGO_ENABLED=1
+    ldflags:
+      - -s -w -X 7geese-cli/internal/cli.version={{ .Version }}
+    targets:
+      - darwin_amd64
+      - darwin_arm64
+
+  - id: 7geese-cli-other
     main: ./cmd/7geese-pp-cli
     binary: 7geese-cli
     env:
@@ -11,8 +22,6 @@ builds:
     ldflags:
       - -s -w -X 7geese-cli/internal/cli.version={{ .Version }}
     targets:
-      - darwin_amd64
-      - darwin_arm64
       - linux_amd64
       - linux_arm64
       - windows_amd64

@@ -49,8 +49,8 @@ Run 'sync' first to populate the store.`,
 					return fmt.Errorf("not authenticated — run '7geese-cli auth login' first")
 				}
 				fmt.Fprintln(cmd.ErrOrStderr(), "Reading session from browser...")
-				browsers := resolveBrowsers(false, false, false)
-				session, csrf, _, _, authErr := extractSweetCookies(browsers)
+				browsers := resolveBrowserNames(false, false, false)
+				session, csrf, _, authErr := extractKookyCookies(browsers)
 				if authErr != nil {
 					return fmt.Errorf("auth login failed: %w\nMake sure you are logged into app.7geese.com in Chrome or Firefox")
 				}
