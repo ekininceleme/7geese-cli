@@ -1041,6 +1041,11 @@ func doSync(ctx context.Context, flags *rootFlags, progress io.Writer) error {
 	const maxPages = 100
 
 	profileID, _ := fetchCurrentUserID(flags)
+	if profileID > 0 {
+		if cfg, err := config.Load(flags.configPath); err == nil {
+			_ = cfg.SaveUserID(profileID)
+		}
+	}
 
 	type syncJob struct {
 		resource    string
@@ -1123,6 +1128,27 @@ func doSync(ctx context.Context, flags *rootFlags, progress io.Writer) error {
 			fmt.Fprintf(progress, "  %s: warning: %v\n", r.name, r.err)
 		} else {
 			fmt.Fprintf(progress, "  %s: %d synced\n", r.name, r.count)
+		}
+	}
+
+	// Phase 3: sync objectives and snapshots for direct reports.
+	if profileID > 0 {
+		reportIDs := fetchDirectReportIDs(db, profileID)
+		for _, rid := range reportIDs {
+			if count, err := syncUserObjectives(flags, db, rid, false); err != nil {
+				if progress != nil {
+					fmt.Fprintf(progress, "  report %d objectives: warning: %v\n", rid, err)
+				}
+			} else if progress != nil {
+				fmt.Fprintf(progress, "  report %d objectives: %d synced\n", rid, count)
+			}
+			if count, err := syncUserSnapshots(flags, db, rid, false); err != nil {
+				if progress != nil {
+					fmt.Fprintf(progress, "  report %d snapshots: warning: %v\n", rid, err)
+				}
+			} else if progress != nil {
+				fmt.Fprintf(progress, "  report %d snapshots: %d synced\n", rid, count)
+			}
 		}
 	}
 	return nil
