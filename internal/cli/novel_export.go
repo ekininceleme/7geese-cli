@@ -278,40 +278,12 @@ func resolveExportUser(db *store.Store, filter string) (int, error) {
 		return 0, fmt.Errorf("user %q not found in local store (run 'sync' first)", filter)
 	}
 
-	// Primary: user ID saved to config by sync (from /status/ API call).
-	if cfg, err := config.Load(""); err == nil && cfg.SevengeeseUserID > 0 {
-		return cfg.SevengeeseUserID, nil
+	// User ID is written to config by sync (from /status/ API call).
+	cfg, err := config.Load("")
+	if err != nil || cfg.SevengeeseUserID == 0 {
+		return 0, fmt.Errorf("could not detect current user — run 'sync' first or pass --user")
 	}
-
-	// Fallback for users who synced before this field was added:
-	// detect from performancecycles (target is always the authed user).
-	row := db.DB().QueryRow(`
-		SELECT CAST(json_extract(data,'$.target.id') AS INTEGER)
-		FROM resources WHERE resource_type = 'performancecycles'
-		LIMIT 1
-	`)
-	var id int
-	if err := row.Scan(&id); err == nil && id > 0 {
-		return id, nil
-	}
-
-	// Last resort: most frequent participant across both sides of oneonones.
-	// Managers are always creator (never target), so counting only target.id
-	// would return a report's ID instead of the current user's.
-	row = db.DB().QueryRow(`
-		SELECT id, COUNT(*) as c FROM (
-			SELECT CAST(json_extract(data,'$.creator.id') AS INTEGER) as id
-			FROM resources WHERE resource_type = 'oneonones'
-			UNION ALL
-			SELECT CAST(json_extract(data,'$.target.id') AS INTEGER) as id
-			FROM resources WHERE resource_type = 'oneonones'
-		) WHERE id > 0
-		GROUP BY id ORDER BY c DESC LIMIT 1
-	`)
-	if err := row.Scan(&id); err == nil && id > 0 {
-		return id, nil
-	}
-	return 0, fmt.Errorf("could not detect current user — run 'sync' first or pass --user")
+	return cfg.SevengeeseUserID, nil
 }
 
 func buildExportProfile(db *store.Store, profileID int, since string) (*exportProfile, error) {
