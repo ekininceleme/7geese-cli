@@ -102,9 +102,15 @@ Run 'sync' first to populate the store.`,
 				return err
 			}
 
-			profile, err := buildExportProfile(db, profileID, since)
-			if err != nil {
-				return err
+			out := exportOutput{
+				ExportedAt: time.Now().UTC().Format(time.RFC3339),
+				Me:         buildExportProfile(db, profileID, since),
+			}
+			for _, rid := range fetchDirectReportIDs(db, profileID) {
+				out.DirectReports = append(out.DirectReports, buildExportProfile(db, rid, since))
+			}
+			if out.DirectReports == nil {
+				out.DirectReports = []exportProfile{}
 			}
 
 			enc := json.NewEncoder(cmd.OutOrStdout())
@@ -118,13 +124,13 @@ Run 'sync' first to populate the store.`,
 				defer f.Close()
 				enc = json.NewEncoder(f)
 				enc.SetIndent("", "  ")
-				if err := enc.Encode(profile); err != nil {
+				if err := enc.Encode(out); err != nil {
 					return err
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Exported to %s\n", output)
 				return nil
 			}
-			return enc.Encode(profile)
+			return enc.Encode(out)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "", "Database path")
@@ -136,9 +142,14 @@ Run 'sync' first to populate the store.`,
 
 // --- export types ---
 
+type exportOutput struct {
+	ExportedAt    string        `json:"exported_at" jsonschema:"description=ISO 8601 timestamp of when this export was generated"`
+	Me            exportProfile `json:"me" jsonschema:"description=The authenticated user's full profile and history"`
+	DirectReports []exportProfile `json:"direct_reports" jsonschema:"description=Direct reports with the same data shape as me"`
+}
+
 type exportProfile struct {
-	ExportedAt   string            `json:"exported_at" jsonschema:"description=ISO 8601 timestamp of when this export was generated"`
-	Profile      exportUser        `json:"profile" jsonschema:"description=The authenticated user's profile information"`
+	Profile      exportUser        `json:"profile" jsonschema:"description=User profile information"`
 	Objectives   []exportObjective `json:"objectives" jsonschema:"description=OKRs where the user is an owner, stakeholder, or follower"`
 	Oneonones    []exportMeeting   `json:"oneonones" jsonschema:"description=1:1 meeting history with full Q&A from both participants"`
 	Recognitions exportRecognition `json:"recognitions" jsonschema:"description=Recognition badges sent and received"`
@@ -286,18 +297,37 @@ func resolveExportUser(db *store.Store, filter string) (int, error) {
 	return cfg.SevengeeseUserID, nil
 }
 
-func buildExportProfile(db *store.Store, profileID int, since string) (*exportProfile, error) {
-	profile := &exportProfile{
-		ExportedAt: time.Now().UTC().Format(time.RFC3339),
+func buildExportProfile(db *store.Store, profileID int, since string) exportProfile {
+	return exportProfile{
+		Profile:      fetchExportUser(db, profileID),
+		Objectives:   fetchExportObjectives(db, profileID, since),
+		Oneonones:    fetchExportOneonones(db, profileID, since),
+		Recognitions: fetchExportRecognition(db, profileID, since),
+		Reviews:      fetchExportReviews(db, profileID, since),
 	}
+}
 
-	profile.Profile = fetchExportUser(db, profileID)
-	profile.Objectives = fetchExportObjectives(db, profileID, since)
-	profile.Oneonones = fetchExportOneonones(db, profileID, since)
-	profile.Recognitions = fetchExportRecognition(db, profileID, since)
-	profile.Reviews = fetchExportReviews(db, profileID, since)
-
-	return profile, nil
+func fetchDirectReportIDs(db *store.Store, profileID int) []int {
+	managerURI := fmt.Sprintf("/api/v1/userprofile/%d/", profileID)
+	rows, err := db.Query(`
+		SELECT CAST(json_extract(data,'$.id') AS INTEGER)
+		FROM resources
+		WHERE resource_type = 'userprofile'
+		  AND json_extract(data,'$.reports_to') = ?
+		  AND CAST(json_extract(data,'$.id') AS INTEGER) != ?
+	`, managerURI, profileID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err == nil && id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func fetchExportUser(db *store.Store, profileID int) exportUser {
