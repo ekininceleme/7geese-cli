@@ -12,14 +12,14 @@ import (
 	"strings"
 	"time"
 
-	mcplib "github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 	"7geese-cli/internal/cli"
-	"7geese-cli/internal/cliutil"
 	"7geese-cli/internal/client"
+	"7geese-cli/internal/cliutil"
 	"7geese-cli/internal/config"
 	"7geese-cli/internal/mcp/cobratree"
 	"7geese-cli/internal/store"
+	mcplib "github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // RegisterTools registers all API operations as MCP tools.
@@ -31,7 +31,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/badges/", []mcpParamBinding{ }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/badges/", []mcpParamBinding{}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("categories_list",
@@ -40,7 +40,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/categories/", []mcpParamBinding{ }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/categories/", []mcpParamBinding{}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("checkins_create",
@@ -49,7 +49,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("POST", "/api/v1/checkins/", []mcpParamBinding{{PublicName: "message", WireName: "message", Location: "body"}, }, []string{ }),
+		makeAPIHandler("POST", "/api/v1/checkins/", []mcpParamBinding{{PublicName: "message", WireName: "message", Location: "body"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("checkins_get",
@@ -59,7 +59,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/checkins/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("GET", "/api/v1/checkins/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("checkins_list",
@@ -71,7 +71,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/checkins/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"},{PublicName: "offset", WireName: "offset", Location: "query"},{PublicName: "creator", WireName: "creator", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/checkins/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, {PublicName: "offset", WireName: "offset", Location: "query"}, {PublicName: "creator", WireName: "creator", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("feedbackrequest_create",
@@ -81,7 +81,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("POST", "/api/v1/feedbackrequest/", []mcpParamBinding{{PublicName: "provider", WireName: "provider", Location: "body"},{PublicName: "message", WireName: "message", Location: "body"}, }, []string{ }),
+		makeAPIHandler("POST", "/api/v1/feedbackrequest/", []mcpParamBinding{{PublicName: "provider", WireName: "provider", Location: "body"}, {PublicName: "message", WireName: "message", Location: "body"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("feedbackrequest_list",
@@ -91,7 +91,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/feedbackrequest/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/feedbackrequest/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("notifications_list",
@@ -102,7 +102,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/notifications/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"},{PublicName: "offset", WireName: "offset", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/notifications/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, {PublicName: "offset", WireName: "offset", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("objectivekeyresults_create",
@@ -115,7 +115,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("POST", "/api/v1/objectivekeyresults/", []mcpParamBinding{{PublicName: "name", WireName: "name", Location: "body"},{PublicName: "objective", WireName: "objective", Location: "body"},{PublicName: "measurement_type", WireName: "measurement_type", Location: "body"},{PublicName: "starting_value", WireName: "starting_value", Location: "body"},{PublicName: "target_value", WireName: "target_value", Location: "body"}, }, []string{ }),
+		makeAPIHandler("POST", "/api/v1/objectivekeyresults/", []mcpParamBinding{{PublicName: "name", WireName: "name", Location: "body"}, {PublicName: "objective", WireName: "objective", Location: "body"}, {PublicName: "measurement_type", WireName: "measurement_type", Location: "body"}, {PublicName: "starting_value", WireName: "starting_value", Location: "body"}, {PublicName: "target_value", WireName: "target_value", Location: "body"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("objectivekeyresults_get",
@@ -125,7 +125,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/objectivekeyresults/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("GET", "/api/v1/objectivekeyresults/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("objectivekeyresults_list",
@@ -137,7 +137,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/objectivekeyresults/", []mcpParamBinding{{PublicName: "objective", WireName: "objective", Location: "query"},{PublicName: "limit", WireName: "limit", Location: "query"},{PublicName: "offset", WireName: "offset", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/objectivekeyresults/", []mcpParamBinding{{PublicName: "objective", WireName: "objective", Location: "query"}, {PublicName: "limit", WireName: "limit", Location: "query"}, {PublicName: "offset", WireName: "offset", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("objectivekeyresults_update",
@@ -147,7 +147,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithString("name", mcplib.Description("")),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("PATCH", "/api/v1/objectivekeyresults/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"},{PublicName: "current_value", WireName: "current_value", Location: "body"},{PublicName: "name", WireName: "name", Location: "body"}, }, []string{"id", }),
+		makeAPIHandler("PATCH", "/api/v1/objectivekeyresults/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, {PublicName: "current_value", WireName: "current_value", Location: "body"}, {PublicName: "name", WireName: "name", Location: "body"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("objectives_create",
@@ -163,7 +163,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("POST", "/api/v1/objectives/", []mcpParamBinding{{PublicName: "name", WireName: "name", Location: "body"},{PublicName: "description", WireName: "description", Location: "body"},{PublicName: "objective_type", WireName: "objective_type", Location: "body"},{PublicName: "due_date", WireName: "due_date", Location: "body"},{PublicName: "start_date", WireName: "start_date", Location: "body"},{PublicName: "measurement_type", WireName: "measurement_type", Location: "body"},{PublicName: "starting_value", WireName: "starting_value", Location: "body"},{PublicName: "target_value", WireName: "target_value", Location: "body"}, }, []string{ }),
+		makeAPIHandler("POST", "/api/v1/objectives/", []mcpParamBinding{{PublicName: "name", WireName: "name", Location: "body"}, {PublicName: "description", WireName: "description", Location: "body"}, {PublicName: "objective_type", WireName: "objective_type", Location: "body"}, {PublicName: "due_date", WireName: "due_date", Location: "body"}, {PublicName: "start_date", WireName: "start_date", Location: "body"}, {PublicName: "measurement_type", WireName: "measurement_type", Location: "body"}, {PublicName: "starting_value", WireName: "starting_value", Location: "body"}, {PublicName: "target_value", WireName: "target_value", Location: "body"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("objectives_delete",
@@ -172,7 +172,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(true),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("DELETE", "/api/v1/objectives/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("DELETE", "/api/v1/objectives/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("objectives_get",
@@ -182,7 +182,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/objectives/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("GET", "/api/v1/objectives/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("objectives_list",
@@ -195,7 +195,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/objectives/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"},{PublicName: "offset", WireName: "offset", Location: "query"},{PublicName: "objective_type", WireName: "objective_type", Location: "query"},{PublicName: "closed", WireName: "closed", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/objectives/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, {PublicName: "offset", WireName: "offset", Location: "query"}, {PublicName: "objective_type", WireName: "objective_type", Location: "query"}, {PublicName: "closed", WireName: "closed", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("objectives_update",
@@ -207,7 +207,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithBoolean("closed", mcplib.Description("")),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("PATCH", "/api/v1/objectives/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"},{PublicName: "name", WireName: "name", Location: "body"},{PublicName: "description", WireName: "description", Location: "body"},{PublicName: "progress", WireName: "progress", Location: "body"},{PublicName: "closed", WireName: "closed", Location: "body"}, }, []string{"id", }),
+		makeAPIHandler("PATCH", "/api/v1/objectives/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, {PublicName: "name", WireName: "name", Location: "body"}, {PublicName: "description", WireName: "description", Location: "body"}, {PublicName: "progress", WireName: "progress", Location: "body"}, {PublicName: "closed", WireName: "closed", Location: "body"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("oneononenotes_list",
@@ -218,7 +218,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/oneononenotes/", []mcpParamBinding{{PublicName: "oneonone", WireName: "oneonone", Location: "query"},{PublicName: "limit", WireName: "limit", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/oneononenotes/", []mcpParamBinding{{PublicName: "oneonone", WireName: "oneonone", Location: "query"}, {PublicName: "limit", WireName: "limit", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("oneonones_get",
@@ -228,7 +228,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/oneonones/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("GET", "/api/v1/oneonones/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("oneonones_list",
@@ -241,7 +241,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/oneonones/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"},{PublicName: "offset", WireName: "offset", Location: "query"},{PublicName: "status", WireName: "status", Location: "query"},{PublicName: "target", WireName: "target", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/oneonones/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, {PublicName: "offset", WireName: "offset", Location: "query"}, {PublicName: "status", WireName: "status", Location: "query"}, {PublicName: "target", WireName: "target", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("organizationalobjectives_get",
@@ -251,7 +251,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/organizationalobjectives/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("GET", "/api/v1/organizationalobjectives/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("organizationalobjectives_list",
@@ -262,7 +262,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/organizationalobjectives/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"},{PublicName: "offset", WireName: "offset", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/organizationalobjectives/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, {PublicName: "offset", WireName: "offset", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("peer_feedback_list",
@@ -273,7 +273,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/feedback/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"},{PublicName: "offset", WireName: "offset", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/feedback/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, {PublicName: "offset", WireName: "offset", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("performancecycles_get",
@@ -283,7 +283,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/performancecycles/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("GET", "/api/v1/performancecycles/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("performancecycles_list",
@@ -294,7 +294,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/performancecycles/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"},{PublicName: "target", WireName: "target", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/performancecycles/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, {PublicName: "target", WireName: "target", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("recognitionbadges_create",
@@ -306,7 +306,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("POST", "/api/v1/recognitionbadges/", []mcpParamBinding{{PublicName: "recipient", WireName: "recipient", Location: "body"},{PublicName: "badge", WireName: "badge", Location: "body"},{PublicName: "message", WireName: "message", Location: "body"},{PublicName: "quiet", WireName: "quiet", Location: "body"}, }, []string{ }),
+		makeAPIHandler("POST", "/api/v1/recognitionbadges/", []mcpParamBinding{{PublicName: "recipient", WireName: "recipient", Location: "body"}, {PublicName: "badge", WireName: "badge", Location: "body"}, {PublicName: "message", WireName: "message", Location: "body"}, {PublicName: "quiet", WireName: "quiet", Location: "body"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("recognitionbadges_get",
@@ -316,7 +316,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/recognitionbadges/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("GET", "/api/v1/recognitionbadges/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("recognitionbadges_list",
@@ -329,7 +329,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/recognitionbadges/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"},{PublicName: "offset", WireName: "offset", Location: "query"},{PublicName: "sender", WireName: "sender", Location: "query"},{PublicName: "recipient", WireName: "recipient", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/recognitionbadges/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, {PublicName: "offset", WireName: "offset", Location: "query"}, {PublicName: "sender", WireName: "sender", Location: "query"}, {PublicName: "recipient", WireName: "recipient", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("team_get",
@@ -339,7 +339,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/team/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("GET", "/api/v1/team/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("team_list",
@@ -349,7 +349,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/team/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/team/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("teamobjectives_get",
@@ -359,7 +359,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/teamobjectives/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("GET", "/api/v1/teamobjectives/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("teamobjectives_list",
@@ -371,7 +371,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/teamobjectives/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"},{PublicName: "offset", WireName: "offset", Location: "query"},{PublicName: "closed", WireName: "closed", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/teamobjectives/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, {PublicName: "offset", WireName: "offset", Location: "query"}, {PublicName: "closed", WireName: "closed", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("user_get",
@@ -381,7 +381,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/user/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("GET", "/api/v1/user/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("user_list",
@@ -394,7 +394,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/user/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"},{PublicName: "offset", WireName: "offset", Location: "query"},{PublicName: "email", WireName: "email", Location: "query"},{PublicName: "is_active", WireName: "is_active", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/user/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, {PublicName: "offset", WireName: "offset", Location: "query"}, {PublicName: "email", WireName: "email", Location: "query"}, {PublicName: "is_active", WireName: "is_active", Location: "query"}}, []string{}),
 	)
 	s.AddTool(
 		mcplib.NewTool("userprofile_get",
@@ -404,7 +404,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/userprofile/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}, }, []string{"id", }),
+		makeAPIHandler("GET", "/api/v1/userprofile/{id}/", []mcpParamBinding{{PublicName: "id", WireName: "id", Location: "path"}}, []string{"id"}),
 	)
 	s.AddTool(
 		mcplib.NewTool("userprofile_list",
@@ -414,7 +414,7 @@ func RegisterTools(s *server.MCPServer) {
 			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
-		makeAPIHandler("GET", "/api/v1/userprofile/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}, }, []string{ }),
+		makeAPIHandler("GET", "/api/v1/userprofile/", []mcpParamBinding{{PublicName: "limit", WireName: "limit", Location: "query"}}, []string{}),
 	)
 	// Search tool — faster than iterating list endpoints for finding specific items
 	s.AddTool(
@@ -612,6 +612,7 @@ func dbPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "share", "7geese-cli", "data.db")
 }
+
 // Note: MCP tools use their own dbPath() because they are in a separate package (main, not cli).
 // The CLI's defaultDBPath() in the cli package uses the same canonical path.
 
@@ -751,129 +752,129 @@ func handleContext(_ context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToo
 			"type": "cookie",
 			"env_vars": []map[string]any{
 				{
-					"name": "SEVENGEESE_SESSION",
-					"kind": "per_call",
-					"required": true,
-					"sensitive": true,
+					"name":        "SEVENGEESE_SESSION",
+					"kind":        "per_call",
+					"required":    true,
+					"sensitive":   true,
 					"description": "Set to your API credential.",
 				},
 			},
 		},
 		"resources": []map[string]any{
 			{
-				"name": "badges",
+				"name":        "badges",
 				"description": "Available badge types for recognition",
-				"endpoints": []string{"list",  },
-				"syncable": true,
+				"endpoints":   []string{"list"},
+				"syncable":    true,
 			},
 			{
-				"name": "categories",
+				"name":        "categories",
 				"description": "Objective categories for tagging",
-				"endpoints": []string{"list",  },
-				"syncable": true,
+				"endpoints":   []string{"list"},
+				"syncable":    true,
 			},
 			{
-				"name": "checkins",
+				"name":        "checkins",
 				"description": "Weekly check-ins on goals and progress",
-				"endpoints": []string{"create", "get", "list",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"create", "get", "list"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "feedbackrequest",
+				"name":        "feedbackrequest",
 				"description": "Feedback requests sent to peers",
-				"endpoints": []string{"create", "list",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"create", "list"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "notifications",
+				"name":        "notifications",
 				"description": "User notifications",
-				"endpoints": []string{"list",  },
-				"syncable": true,
+				"endpoints":   []string{"list"},
+				"syncable":    true,
 			},
 			{
-				"name": "objectivekeyresults",
+				"name":        "objectivekeyresults",
 				"description": "Key results belonging to objectives",
-				"endpoints": []string{"create", "get", "list", "update",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"create", "get", "list", "update"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "objectives",
+				"name":        "objectives",
 				"description": "Personal OKRs and goals",
-				"endpoints": []string{"create", "delete", "get", "list", "update",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"create", "delete", "get", "list", "update"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "oneononenotes",
+				"name":        "oneononenotes",
 				"description": "Notes attached to one-on-one meetings",
-				"endpoints": []string{"list",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"list"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "oneonones",
+				"name":        "oneonones",
 				"description": "One-on-one meetings between manager and report",
-				"endpoints": []string{"get", "list",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"get", "list"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "organizationalobjectives",
+				"name":        "organizationalobjectives",
 				"description": "Company-wide OKRs",
-				"endpoints": []string{"get", "list",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"get", "list"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "peer_feedback",
+				"name":        "peer_feedback",
 				"description": "Peer feedback requests and responses",
-				"endpoints": []string{"list",  },
-				"syncable": true,
+				"endpoints":   []string{"list"},
+				"syncable":    true,
 			},
 			{
-				"name": "performancecycles",
+				"name":        "performancecycles",
 				"description": "Performance review cycles",
-				"endpoints": []string{"get", "list",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"get", "list"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "recognitionbadges",
+				"name":        "recognitionbadges",
 				"description": "Recognition and kudos sent between users",
-				"endpoints": []string{"create", "get", "list",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"create", "get", "list"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "team",
+				"name":        "team",
 				"description": "Teams in the organization",
-				"endpoints": []string{"get", "list",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"get", "list"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "teamobjectives",
+				"name":        "teamobjectives",
 				"description": "Team-level OKRs",
-				"endpoints": []string{"get", "list",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"get", "list"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "user",
+				"name":        "user",
 				"description": "Users in the organization",
-				"endpoints": []string{"get", "list",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"get", "list"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 			{
-				"name": "userprofile",
+				"name":        "userprofile",
 				"description": "Extended user profile with role and manager info",
-				"endpoints": []string{"get", "list",  },
-				"syncable": true,
-				"searchable": true,
+				"endpoints":   []string{"get", "list"},
+				"syncable":    true,
+				"searchable":  true,
 			},
 		},
 		"query_tips": []string{
@@ -886,7 +887,7 @@ func handleContext(_ context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToo
 		// Command-mirror capabilities are exposed through MCP by shelling out
 		// to the companion CLI binary.
 		"command_mirror_capabilities": []map[string]string{
-			{"name": "Browser Cookie Auth", "command": "auth login --chrome", "description": "Log in by reading your existing Chrome (or Firefox/Safari) session — no API key needed.", "rationale": "7Geese has no API token endpoint; Okta SSO is the only auth path. sweetcookie reads the encrypted browser cookie...", "via": "mcp-command-mirror"},
+			{"name": "Browser Cookie Auth", "command": "auth login --chrome", "description": "Log in by reading your existing Chrome (or Firefox/Safari) session — no API key needed.", "rationale": "7Geese has no API token endpoint; Okta SSO is the only auth path. kooky reads the encrypted browser cookie...", "via": "mcp-command-mirror"},
 			{"name": "OKR Health Dashboard", "command": "okr health", "description": "See which objectives are on track, at risk, or stale — across personal, team, and org levels.", "rationale": "Requires joining objectives, key results, and due dates in SQLite; no single API endpoint returns this cross-level view.", "via": "mcp-command-mirror"},
 			{"name": "Stale Objective Detector", "command": "objectives stale", "description": "Find objectives that have not been updated in N days.", "rationale": "Requires time-windowed query across modified timestamps in SQLite; not available via any API filter.", "via": "mcp-command-mirror"},
 			{"name": "Check-in Streak Tracker", "command": "checkins streak", "description": "See consecutive weekly check-in streaks for yourself or your team.", "rationale": "Requires time-series aggregation across the full check-in history in SQLite; 98k records make this impractical via...", "via": "mcp-command-mirror"},
@@ -895,7 +896,7 @@ func handleContext(_ context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToo
 			{"name": "My Week Summary", "command": "me week", "description": "Everything relevant to you this week: check-ins due, OKRs to update, upcoming 1:1s.", "rationale": "Cross-entity join of check-ins, objectives, and oneonones for the past/next 7 days.", "via": "mcp-command-mirror"},
 		},
 		"playbook": []map[string]string{
-			{"topic": "Browser Cookie Auth", "insight": "7Geese has no API token endpoint; Okta SSO is the only auth path. sweetcookie reads the encrypted browser cookie store cross-platform."},
+			{"topic": "Browser Cookie Auth", "insight": "7Geese has no API token endpoint; Okta SSO is the only auth path. kooky reads the encrypted browser cookie store using CGO + Security.framework on macOS."},
 			{"topic": "OKR Health Dashboard", "insight": "Requires joining objectives, key results, and due dates in SQLite; no single API endpoint returns this cross-level view."},
 			{"topic": "Stale Objective Detector", "insight": "Requires time-windowed query across modified timestamps in SQLite; not available via any API filter."},
 			{"topic": "Check-in Streak Tracker", "insight": "Requires time-series aggregation across the full check-in history in SQLite; 98k records make this impractical via paginated API calls."},

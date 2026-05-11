@@ -29,7 +29,7 @@ If the `npx` install fails before this CLI has a public-library category, instal
 
 If `--version` reports "command not found" after install, the install step did not put the binary on `$PATH`. Do not proceed with skill commands until verification succeeds.
 
-7Geese has no API tokens and no CLI. This tool reads your existing browser session via sweetcookie, syncs your org's performance data to a local SQLite store, and makes every OKR, check-in, 1:1, and recognition queryable offline with JSON output.
+7Geese has no API tokens and no CLI. This tool reads your existing browser session via kooky, syncs your org's performance data to a local SQLite store, and makes every OKR, check-in, 1:1, and recognition queryable offline with JSON output.
 
 ## When to Use This CLI
 
@@ -242,7 +242,7 @@ Structured OKR health data for AI agent context
 
 ## Auth Setup
 
-7Geese uses Okta SSO — there are no API keys. Run `auth login --chrome` once and the CLI reads your `sgsession4` session cookie directly from Chrome's encrypted cookie store using sweetcookie. Works with Chrome, Firefox, and Safari. No credentials to manage.
+7Geese uses Okta SSO — there are no API keys. Run `auth login --chrome` once and the CLI reads your `sgsession4` session cookie directly from Chrome's encrypted cookie store using kooky (CGO + Security.framework on macOS). Works with Chrome, Firefox, and Safari. No credentials to manage.
 
 Run `7geese-pp-cli doctor` to verify setup.
 
