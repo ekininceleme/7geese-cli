@@ -13,18 +13,19 @@ import (
 )
 
 type Config struct {
-	BaseURL        string `json:"base_url"`
-	AuthHeaderVal  string `json:"auth_header"`
-	Headers        map[string]string `json:"headers,omitempty"`
-	AuthSource     string `json:"-"`
-	AccessToken    string `json:"access_token"`
-	RefreshToken   string `json:"refresh_token"`
-	TokenExpiry    time.Time `json:"token_expiry"`
-	ClientID       string `json:"client_id"`
-	ClientSecret   string `json:"client_secret"`
-	Path           string `json:"-"`
-	SevengeeseSession string `json:"session"`
-	SevengeeseCSRF    string `json:"csrf,omitempty"`
+	BaseURL           string            `json:"base_url"`
+	AuthHeaderVal     string            `json:"auth_header"`
+	Headers           map[string]string `json:"headers,omitempty"`
+	AuthSource        string            `json:"-"`
+	AccessToken       string            `json:"access_token"`
+	RefreshToken      string            `json:"refresh_token"`
+	TokenExpiry       time.Time         `json:"token_expiry"`
+	ClientID          string            `json:"client_id"`
+	ClientSecret      string            `json:"client_secret"`
+	Path              string            `json:"-"`
+	SevengeeseSession string            `json:"session"`
+	SevengeeseCSRF    string            `json:"csrf,omitempty"`
+	SevengeeseUserID  int               `json:"user_id,omitempty"`
 }
 
 func Load(configPath string) (*Config, error) {
@@ -154,12 +155,18 @@ func (c *Config) SaveCookies(session, csrf string) error {
 	return c.save()
 }
 
+func (c *Config) SaveUserID(id int) error {
+	c.SevengeeseUserID = id
+	return c.save()
+}
+
 func (c *Config) ClearTokens() error {
 	c.AccessToken = ""
 	c.RefreshToken = ""
 	c.TokenExpiry = time.Time{}
 	c.SevengeeseSession = ""
 	c.SevengeeseCSRF = ""
+	c.SevengeeseUserID = 0
 	if c.Headers != nil {
 		delete(c.Headers, "Cookie")
 		delete(c.Headers, "X-CSRFToken")

@@ -278,7 +278,13 @@ func resolveExportUser(db *store.Store, filter string) (int, error) {
 		return 0, fmt.Errorf("user %q not found in local store (run 'sync' first)", filter)
 	}
 
-	// Default: detect current user from performance cycles (target is always the authed user)
+	// Primary: user ID saved to config by sync (from /status/ API call).
+	if cfg, err := config.Load(""); err == nil && cfg.SevengeeseUserID > 0 {
+		return cfg.SevengeeseUserID, nil
+	}
+
+	// Fallback for users who synced before this field was added:
+	// detect from performancecycles (target is always the authed user).
 	row := db.DB().QueryRow(`
 		SELECT CAST(json_extract(data,'$.target.id') AS INTEGER)
 		FROM resources WHERE resource_type = 'performancecycles'
@@ -289,7 +295,7 @@ func resolveExportUser(db *store.Store, filter string) (int, error) {
 		return id, nil
 	}
 
-	// Fall back: most frequent participant across both sides of oneonones.
+	// Last resort: most frequent participant across both sides of oneonones.
 	// Managers are always creator (never target), so counting only target.id
 	// would return a report's ID instead of the current user's.
 	row = db.DB().QueryRow(`

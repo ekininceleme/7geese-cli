@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"7geese-cli/internal/config"
 	"7geese-cli/internal/store"
 	"context"
 	"encoding/json"
@@ -143,6 +144,11 @@ Exit codes & warnings:
 			profileID, whoamiErr := fetchCurrentUserID(flags)
 			if whoamiErr != nil && humanFriendly {
 				fmt.Fprintf(os.Stderr, "warning: could not resolve current user (%v) — some filters will be skipped\n", whoamiErr)
+			}
+			if profileID > 0 {
+				if cfg, err := config.Load(flags.configPath); err == nil {
+					_ = cfg.SaveUserID(profileID)
+				}
 			}
 
 			// Worker pool: produce resources, N workers consume
