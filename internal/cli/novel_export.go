@@ -289,12 +289,18 @@ func resolveExportUser(db *store.Store, filter string) (int, error) {
 		return id, nil
 	}
 
-	// Fall back: most frequent participant in oneonones
+	// Fall back: most frequent participant across both sides of oneonones.
+	// Managers are always creator (never target), so counting only target.id
+	// would return a report's ID instead of the current user's.
 	row = db.DB().QueryRow(`
-		SELECT json_extract(data,'$.target.id'), COUNT(*) as c
-		FROM resources WHERE resource_type = 'oneonones'
-		GROUP BY json_extract(data,'$.target.id')
-		ORDER BY c DESC LIMIT 1
+		SELECT id, COUNT(*) as c FROM (
+			SELECT CAST(json_extract(data,'$.creator.id') AS INTEGER) as id
+			FROM resources WHERE resource_type = 'oneonones'
+			UNION ALL
+			SELECT CAST(json_extract(data,'$.target.id') AS INTEGER) as id
+			FROM resources WHERE resource_type = 'oneonones'
+		) WHERE id > 0
+		GROUP BY id ORDER BY c DESC LIMIT 1
 	`)
 	if err := row.Scan(&id); err == nil && id > 0 {
 		return id, nil
