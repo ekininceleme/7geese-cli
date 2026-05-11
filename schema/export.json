@@ -45,7 +45,7 @@
             "$ref": "#/$defs/exportMeeting"
           },
           "type": "array",
-          "description": "1:1 meeting history with full Q&A from both participants"
+          "description": "1:1 meeting history with full Q&A from both participants (only present on me, not direct_reports)"
         },
         "recognitions": {
           "$ref": "#/$defs/exportRecognition",
@@ -64,7 +64,6 @@
       "required": [
         "profile",
         "objectives",
-        "oneonones",
         "recognitions",
         "reviews"
       ]
