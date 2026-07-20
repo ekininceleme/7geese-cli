@@ -254,7 +254,7 @@ func fetchContextObjectivesPage(flags *rootFlags, cfg *config.Config, filter str
 
 	// Build the query dynamically with the correct filter arg
 	query := fmt.Sprintf(`
-query getUserContextObjectives($userId: Float!, $first: Int!, $after: String) {
+query getUserContextObjectives($userId: Int!, $first: Int!, $after: String) {
   objectives(first: $first, after: $after, %s: $userId, orderBy: "closed,-due_datetime") {
     totalCount
     pageInfo { endCursor hasNextPage __typename }
@@ -318,9 +318,15 @@ query getUserContextObjectives($userId: Float!, $first: Int!, $after: String) {
 		Data struct {
 			Objectives gqlObjectivePage `json:"objectives"`
 		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 		return nil, err
+	}
+	if len(envelope.Errors) > 0 {
+		return nil, fmt.Errorf("GraphQL error: %s", envelope.Errors[0].Message)
 	}
 	return &envelope.Data.Objectives, nil
 }
