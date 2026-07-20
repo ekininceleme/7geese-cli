@@ -52,7 +52,7 @@ Run 'sync' first to populate the store.`,
 				browsers := resolveBrowserNames(false, false, false)
 				session, csrf, _, authErr := extractKookyCookies(browsers)
 				if authErr != nil {
-					return fmt.Errorf("auth login failed: %w\nMake sure you are logged into app.7geese.com in Chrome or Firefox")
+					return fmt.Errorf("auth login failed: %w\nMake sure you are logged into app.7geese.com in Chrome or Firefox", authErr)
 				}
 				if err := cfg.SaveCookies(session, csrf); err != nil {
 					return fmt.Errorf("saving session: %w", err)
