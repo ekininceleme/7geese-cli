@@ -305,6 +305,13 @@ Exit codes & warnings:
 			novelTasks = append(novelTasks, novelTask{"finalized_oneonones", func() (int, error) {
 				return syncFinalizedMeetings(flags, db, full)
 			}})
+			if profileID > 0 {
+				novelTasks = append(novelTasks, novelTask{"performancecycles", func() (int, error) {
+					res := syncResource(c, db, "performancecycles", sinceTS, full, maxPages,
+						map[string]string{"target": strconv.Itoa(profileID)})
+					return res.Count, res.Err
+				}})
+			}
 
 			novelResultCh := make(chan novelResult, len(novelTasks))
 			var novelWg sync.WaitGroup
@@ -392,7 +399,7 @@ func syncResource(c interface {
 	var totalCount int
 
 	// Resume cursor from sync_state (unless --full cleared it)
-	existingCursor, lastSynced, _, _ := db.GetSyncState(resource)
+	existingCursor, lastSynced, lastCount, _ := db.GetSyncState(resource)
 
 	// Determine the since param value:
 	// 1. Explicit --since flag takes priority
@@ -403,8 +410,32 @@ func syncResource(c interface {
 		effectiveSince = lastSynced.Format(time.RFC3339)
 	}
 
-	cursor := existingCursor
 	pageSize := determinePaginationDefaults()
+
+	// Offset-resume: when a previous sync completed (cursor cleared, count>0),
+	// start near the end of the already-fetched range instead of re-scanning
+	// from offset 0. The 7Geese DRF API returns records in ascending PK order
+	// so new records are always appended at the end. We back-track by a small
+	// buffer to catch recently-edited records near the frontier.
+	// Skipped when: an in-progress cursor exists (resume it instead), --full
+	// was requested (state was reset to 0 by the caller), or this is the first
+	// ever sync (lastCount==0).
+	const syncBacktrackPages = 2
+	cursor := existingCursor
+	resumeOffset := 0 // offset we started from; added to totalCount when saving final state
+	if cursor == "" && !full && lastCount > 0 {
+		startOffset := lastCount - syncBacktrackPages*pageSize.limit
+		if startOffset > 0 {
+			cursor = strconv.Itoa(startOffset)
+			resumeOffset = startOffset
+		}
+	} else if cursor != "" {
+		// In-progress cursor from an interrupted sync — parse as numeric offset
+		// (DRF offset pagination stores the next page's offset as the cursor string).
+		if n, err := strconv.Atoi(cursor); err == nil && n > 0 {
+			resumeOffset = n
+		}
+	}
 
 	var progressCount int64
 	pagesFetched := 0
@@ -581,8 +612,11 @@ func syncResource(c interface {
 		cursor = nextCursor
 	}
 
-	// Final sync state: clear cursor (sync is complete), update count
-	_ = db.SaveSyncState(resource, "", totalCount)
+	// Final sync state: clear cursor (sync is complete), update count.
+	// When resuming from an offset, add resumeOffset so the saved count
+	// approximates the true API total rather than just the records fetched
+	// in this run. The next run uses this to derive its start offset.
+	_ = db.SaveSyncState(resource, "", resumeOffset+totalCount)
 
 	// F4b symptom probe: if items were consumed and successfully
 	// extracted (extractFailures < consumed) but nothing landed in
@@ -927,12 +961,14 @@ func defaultSyncResources() []string {
 	// recognitionbadges, userprofile, and objectives are handled as post-sync
 	// steps with explicit user-scoping (sender/recipient filter, direct GET,
 	// and GraphQL owner filter respectively).
+	// performancecycles is intentionally excluded here — the endpoint scans
+	// company-wide data and times out. It is synced as a user-scoped post-sync
+	// task with target=<profileID> instead.
 	return []string{
 		"feedbackrequest",
 		"oneononenotes",
 		"oneonones",
 		"peer_feedback",
-		"performancecycles",
 	}
 }
 
@@ -1107,6 +1143,13 @@ func doSync(ctx context.Context, flags *rootFlags, progress io.Writer) error {
 	novelTasks = append(novelTasks, novelTask{"finalized_oneonones", func() (int, error) {
 		return syncFinalizedMeetings(flags, db, false)
 	}})
+	if profileID > 0 {
+		novelTasks = append(novelTasks, novelTask{"performancecycles", func() (int, error) {
+			res := syncResource(c, db, "performancecycles", "", false, maxPages,
+				map[string]string{"target": strconv.Itoa(profileID)})
+			return res.Count, res.Err
+		}})
+	}
 
 	novelResultCh := make(chan novelResult, len(novelTasks))
 	var novelWg sync.WaitGroup
