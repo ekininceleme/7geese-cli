@@ -295,7 +295,7 @@ Exit codes & warnings:
 						return syncUserRecognition(flags, db, profileID)
 					}},
 					novelTask{"user_objectives", func() (int, error) {
-						return syncUserObjectives(flags, db, profileID, full)
+						return syncUserObjectives(flags, db, profileID)
 					}},
 					novelTask{"user_snapshots", func() (int, error) {
 						return syncUserSnapshots(flags, db, profileID, full)
@@ -345,7 +345,7 @@ Exit codes & warnings:
 					fmt.Fprintln(os.Stderr, "syncing direct reports data...")
 				}
 				for _, rid := range reportIDs {
-					if count, err := syncUserObjectives(flags, db, rid, full); err != nil {
+					if count, err := syncUserObjectives(flags, db, rid); err != nil {
 						if humanFriendly {
 							fmt.Fprintf(os.Stderr, "  report %d objectives: warning: %v\n", rid, err)
 						}
@@ -1136,7 +1136,7 @@ func doSync(ctx context.Context, flags *rootFlags, progress io.Writer) error {
 				return 1, nil
 			}},
 			novelTask{"recognitionbadges", func() (int, error) { return syncUserRecognition(flags, db, profileID) }},
-			novelTask{"user_objectives", func() (int, error) { return syncUserObjectives(flags, db, profileID, false) }},
+			novelTask{"user_objectives", func() (int, error) { return syncUserObjectives(flags, db, profileID) }},
 			novelTask{"user_snapshots", func() (int, error) { return syncUserSnapshots(flags, db, profileID, false) }},
 		)
 	}
@@ -1178,7 +1178,7 @@ func doSync(ctx context.Context, flags *rootFlags, progress io.Writer) error {
 	if profileID > 0 {
 		reportIDs := fetchDirectReportIDs(db, profileID)
 		for _, rid := range reportIDs {
-			if count, err := syncUserObjectives(flags, db, rid, false); err != nil {
+			if count, err := syncUserObjectives(flags, db, rid); err != nil {
 				if progress != nil {
 					fmt.Fprintf(progress, "  report %d objectives: warning: %v\n", rid, err)
 				}
