@@ -155,7 +155,7 @@ func TestPostSyncObjectives(t *testing.T) {
 	t.Logf("profileID = %d", profileID)
 
 	start := time.Now()
-	count, err := syncUserObjectives(flags, db, profileID, false)
+	count, err := syncUserObjectives(flags, db, profileID)
 	if err != nil {
 		t.Fatalf("syncUserObjectives: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestPostSyncObjectivesFull(t *testing.T) {
 	t.Logf("profileID = %d", profileID)
 
 	start := time.Now()
-	count, err := syncUserObjectives(flags, db, profileID, true)
+	count, err := syncUserObjectives(flags, db, profileID)
 	if err != nil {
 		t.Fatalf("syncUserObjectives (force): %v", err)
 	}
@@ -264,7 +264,7 @@ func TestPostSyncAll(t *testing.T) {
 		return fmt.Sprintf("%d meetings", n), err
 	})
 	run("objectives", func() (string, error) {
-		n, err := syncUserObjectives(flags, db, profileID, false)
+		n, err := syncUserObjectives(flags, db, profileID)
 		return fmt.Sprintf("%d objectives", n), err
 	})
 

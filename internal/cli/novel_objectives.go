@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"time"
 
@@ -429,10 +430,69 @@ func syncCurrentUserProfile(flags *rootFlags, db *store.Store, profileID int) er
 	return nil
 }
 
+// normalizeGQLObjective converts a GraphQL objective node into a map with
+// REST-compatible field names so that the objectives resource_type in the
+// local store has a consistent shape for MCP tools, okr health, and me week.
+//
+// Field mapping:
+//
+//	pk            → id
+//	dueDatetime   → due_date
+//	objectiveType → objective_type
+//	lastCheckin.created → updated_at (best-available proxy; empty when no check-in)
+func normalizeGQLObjective(node gqlObjectiveNode) map[string]any {
+	m := map[string]any{
+		"id":             node.PK,
+		"name":           node.Name,
+		"description":    node.Description,
+		"progress":       node.Progress,
+		"closed":         node.Closed,
+		"due_date":       node.DueDatetime,
+		"start_date":     node.StartDate,
+		"objective_type": node.ObjectiveType,
+	}
+	if node.LastCheckin != nil {
+		m["updated_at"] = node.LastCheckin.Created
+	}
+	return m
+}
+
+// storeObjective writes a GraphQL objective node into two resource types:
+//   - user_objectives:<profileID>  (raw GraphQL shape, for sync tracking)
+//   - objectives                   (normalized REST-compatible shape, for MCP tools)
+//
+// Always upserts — no skip-existing guard — so progress and check-in updates
+// are reflected on every sync.
+func storeObjective(db *store.Store, profileID int, node gqlObjectiveNode) error {
+	id := fmt.Sprintf("%d", node.PK)
+
+	// Raw GraphQL record under the user-scoped bucket.
+	raw, err := json.Marshal(node)
+	if err != nil {
+		return fmt.Errorf("marshaling user_objectives record: %w", err)
+	}
+	userRT := fmt.Sprintf("user_objectives:%d", profileID)
+	if err := db.Upsert(userRT, id, json.RawMessage(raw)); err != nil {
+		return fmt.Errorf("upserting user_objectives: %w", err)
+	}
+
+	// Normalized record under objectives so all read paths see it.
+	normalized, err := json.Marshal(normalizeGQLObjective(node))
+	if err != nil {
+		return fmt.Errorf("marshaling normalized objectives record: %w", err)
+	}
+	if err := db.Upsert("objectives", id, json.RawMessage(normalized)); err != nil {
+		return fmt.Errorf("upserting objectives: %w", err)
+	}
+
+	return nil
+}
+
 // syncUserObjectives fetches all objectives where profileID is an owner,
 // stakeholder, or follower via two GraphQL calls (ownerOrStakeholder + follower),
-// deduplicates by pk, and stores each one as "user_objectives" in the local store.
-func syncUserObjectives(flags *rootFlags, db *store.Store, profileID int, force bool) (int, error) {
+// deduplicates by pk, and stores each one via storeObjective — which writes to
+// both user_objectives:<profileID> and objectives so MCP tools can read them.
+func syncUserObjectives(flags *rootFlags, db *store.Store, profileID int) (int, error) {
 	cfg, err := config.Load(flags.configPath)
 	if err != nil || cfg.SevengeeseSession == "" {
 		return 0, fmt.Errorf("no auth configured")
@@ -458,21 +518,10 @@ func syncUserObjectives(flags *rootFlags, db *store.Store, profileID int, force 
 		}
 	}
 
-	resourceType := fmt.Sprintf("user_objectives:%d", profileID)
 	synced := 0
 	for _, node := range all {
-		id := fmt.Sprintf("%d", node.PK)
-		if !force {
-			existing, _ := db.Get(resourceType, id)
-			if existing != nil {
-				continue
-			}
-		}
-		data, err := json.Marshal(node)
-		if err != nil {
-			continue
-		}
-		if err := db.Upsert(resourceType, id, json.RawMessage(data)); err != nil {
+		if err := storeObjective(db, profileID, node); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to store objective %d: %v\n", node.PK, err)
 			continue
 		}
 		synced++
