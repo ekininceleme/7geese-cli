@@ -2,3 +2,4 @@
 /7geese-cli
 dist/
 *.db
+.worktrees/
