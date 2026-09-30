@@ -115,8 +115,9 @@ type gqlPeerFeedbackRequest struct {
 }
 
 // listSnapshotsQuery uses the HAR-confirmed getReviewOverviewPastReviews pattern.
-// state=4 is "completed"; we fetch all completed snapshots with no pkNin exclusion
-// by passing a non-existent pk (0) so nothing is excluded.
+// The API has no "all states" wildcard: state is a required exact-match filter,
+// so fetchSnapshotList below calls this once per workflowState value and merges
+// the results to also pick up in-progress reviews, not just completed ones.
 const listSnapshotsQuery = `
 query getReviewOverviewPastReviews($profileId: Int!, $first: Int!, $offset: Int!, $completedState: Int!) {
   snapshots(
@@ -1272,46 +1273,58 @@ func snapshotGraphQLRequest(cfg *config.Config, opname, query string, variables 
 	return req, nil
 }
 
+// snapshotWorkflowStates are the values snapshotStateName recognizes:
+// 0=employee_input, 1=manager_input, 2=skip_level_approval, 3=admin_approval,
+// 4=completed, 5=acknowledgment.
+var snapshotWorkflowStates = []int{0, 1, 2, 3, 4, 5}
+
 func fetchSnapshotList(cfg *config.Config, profileID int) ([]gqlSnapshotSummary, error) {
+	seen := map[int]bool{}
 	var all []gqlSnapshotSummary
-	offset := 0
-	const limit = 50
-	for {
-		req, err := snapshotGraphQLRequest(cfg, "getReviewOverviewPastReviews", listSnapshotsQuery, map[string]any{
-			"profileId":      profileID,
-			"first":          limit,
-			"offset":         offset,
-			"completedState": 4,
-		})
-		if err != nil {
-			return nil, err
+	for _, state := range snapshotWorkflowStates {
+		offset := 0
+		const limit = 50
+		for {
+			req, err := snapshotGraphQLRequest(cfg, "getReviewOverviewPastReviews", listSnapshotsQuery, map[string]any{
+				"profileId":      profileID,
+				"first":          limit,
+				"offset":         offset,
+				"completedState": state,
+			})
+			if err != nil {
+				return nil, err
+			}
+			resp, err := syncHTTPClient.Do(req)
+			if err != nil {
+				return nil, err
+			}
+			var envelope struct {
+				Data struct {
+					Snapshots struct {
+						Edges []struct {
+							Node gqlSnapshotSummary `json:"node"`
+						} `json:"edges"`
+					} `json:"snapshots"`
+				} `json:"data"`
+			}
+			err = json.NewDecoder(resp.Body).Decode(&envelope)
+			resp.Body.Close()
+			if err != nil {
+				return nil, err
+			}
+			batch := envelope.Data.Snapshots.Edges
+			for _, e := range batch {
+				if seen[e.Node.PK] {
+					continue
+				}
+				seen[e.Node.PK] = true
+				all = append(all, e.Node)
+			}
+			if len(batch) < limit {
+				break
+			}
+			offset += limit
 		}
-		resp, err := syncHTTPClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		var envelope struct {
-			Data struct {
-				Snapshots struct {
-					Edges []struct {
-						Node gqlSnapshotSummary `json:"node"`
-					} `json:"edges"`
-				} `json:"snapshots"`
-			} `json:"data"`
-		}
-		err = json.NewDecoder(resp.Body).Decode(&envelope)
-		resp.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		batch := envelope.Data.Snapshots.Edges
-		for _, e := range batch {
-			all = append(all, e.Node)
-		}
-		if len(batch) < limit {
-			break
-		}
-		offset += limit
 	}
 	return all, nil
 }
