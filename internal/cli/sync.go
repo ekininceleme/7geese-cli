@@ -285,7 +285,11 @@ Exit codes & warnings:
 			var novelTasks []novelTask
 			if profileID > 0 {
 				novelTasks = append(novelTasks,
-					novelTask{"userprofile", func() (int, error) {
+					// "userprofile:self" is a distinct sync_state key from the
+					// "userprofile" resource synced in phase 1 above, so this
+					// task's own-profile-only count doesn't clobber the full
+					// company roster's total_count in doctor's report.
+					novelTask{"userprofile:self", func() (int, error) {
 						if err := syncCurrentUserProfile(flags, db, profileID); err != nil {
 							return 0, err
 						}
@@ -294,10 +298,10 @@ Exit codes & warnings:
 					novelTask{"recognitionbadges", func() (int, error) {
 						return syncUserRecognition(flags, db, profileID)
 					}},
-					novelTask{"user_objectives", func() (int, error) {
+					novelTask{fmt.Sprintf("user_objectives:%d", profileID), func() (int, error) {
 						return syncUserObjectives(flags, db, profileID)
 					}},
-					novelTask{"user_snapshots", func() (int, error) {
+					novelTask{fmt.Sprintf("user_snapshots:%d", profileID), func() (int, error) {
 						return syncUserSnapshots(flags, db, profileID, full)
 					}},
 				)
@@ -327,13 +331,23 @@ Exit codes & warnings:
 			go func() { novelWg.Wait(); close(novelResultCh) }()
 
 			for r := range novelResultCh {
-				if !humanFriendly {
+				if r.err != nil {
+					if humanFriendly {
+						fmt.Fprintf(os.Stderr, "  %s: warning: %v (%dms)\n", r.name, r.err, r.dur.Milliseconds())
+					} else {
+						fmt.Fprintf(os.Stdout, `{"event":"sync_warning","resource":"%s","message":"%s"}`+"\n",
+							r.name, strings.ReplaceAll(r.err.Error(), `"`, `\"`))
+					}
 					continue
 				}
-				if r.err != nil {
-					fmt.Fprintf(os.Stderr, "  %s: warning: %v (%dms)\n", r.name, r.err, r.dur.Milliseconds())
-				} else {
+				// Record sync_state so 'doctor' and other runtime-truth surfaces
+				// see these per-user resources instead of reporting them absent.
+				_ = db.SaveSyncState(r.name, "", r.count)
+				if humanFriendly {
 					fmt.Fprintf(os.Stderr, "  %s: %d synced (%dms)\n", r.name, r.count, r.dur.Milliseconds())
+				} else {
+					fmt.Fprintf(os.Stdout, `{"event":"sync_complete","resource":"%s","total":%d,"duration_ms":%d}`+"\n",
+						r.name, r.count, r.dur.Milliseconds())
 				}
 			}
 
@@ -349,15 +363,21 @@ Exit codes & warnings:
 						if humanFriendly {
 							fmt.Fprintf(os.Stderr, "  report %d objectives: warning: %v\n", rid, err)
 						}
-					} else if humanFriendly {
-						fmt.Fprintf(os.Stderr, "  report %d objectives: %d synced\n", rid, count)
+					} else {
+						_ = db.SaveSyncState(fmt.Sprintf("user_objectives:%d", rid), "", count)
+						if humanFriendly {
+							fmt.Fprintf(os.Stderr, "  report %d objectives: %d synced\n", rid, count)
+						}
 					}
 					if count, err := syncUserSnapshots(flags, db, rid, full); err != nil {
 						if humanFriendly {
 							fmt.Fprintf(os.Stderr, "  report %d snapshots: warning: %v\n", rid, err)
 						}
-					} else if humanFriendly {
-						fmt.Fprintf(os.Stderr, "  report %d snapshots: %d synced\n", rid, count)
+					} else {
+						_ = db.SaveSyncState(fmt.Sprintf("user_snapshots:%d", rid), "", count)
+						if humanFriendly {
+							fmt.Fprintf(os.Stderr, "  report %d snapshots: %d synced\n", rid, count)
+						}
 					}
 				}
 			}
@@ -958,17 +978,25 @@ func parseSinceDuration(s string) (time.Time, error) {
 func defaultSyncResources() []string {
 	// Only session-scoped resources — the API returns only the current user's
 	// data for each of these without any extra filter.
-	// recognitionbadges, userprofile, and objectives are handled as post-sync
-	// steps with explicit user-scoping (sender/recipient filter, direct GET,
-	// and GraphQL owner filter respectively).
+	// recognitionbadges and objectives are handled as post-sync steps with
+	// explicit user-scoping (sender/recipient filter and GraphQL owner filter
+	// respectively).
 	// performancecycles is intentionally excluded here — the endpoint scans
 	// company-wide data and times out. It is synced as a user-scoped post-sync
 	// task with target=<profileID> instead.
+	//
+	// userprofile IS included here (unlike the above) because, unlike its
+	// per-user GET counterpart used by syncCurrentUserProfile, its list
+	// endpoint returns the whole company directory, not just the session
+	// user. That roster is the only source fetchDirectReportIDs has for
+	// resolving "reports_to" — without it, direct reports are never
+	// discovered and their objectives/reviews never get post-sync'd.
 	return []string{
 		"feedbackrequest",
 		"oneononenotes",
 		"oneonones",
 		"peer_feedback",
+		"userprofile",
 	}
 }
 
@@ -1129,15 +1157,19 @@ func doSync(ctx context.Context, flags *rootFlags, progress io.Writer) error {
 	var novelTasks []novelTask
 	if profileID > 0 {
 		novelTasks = append(novelTasks,
-			novelTask{"userprofile", func() (int, error) {
+			// "userprofile:self" is a distinct sync_state key from the
+			// "userprofile" resource synced above, so this task's
+			// own-profile-only count doesn't clobber the full company
+			// roster's total_count in doctor's report.
+			novelTask{"userprofile:self", func() (int, error) {
 				if err := syncCurrentUserProfile(flags, db, profileID); err != nil {
 					return 0, err
 				}
 				return 1, nil
 			}},
 			novelTask{"recognitionbadges", func() (int, error) { return syncUserRecognition(flags, db, profileID) }},
-			novelTask{"user_objectives", func() (int, error) { return syncUserObjectives(flags, db, profileID) }},
-			novelTask{"user_snapshots", func() (int, error) { return syncUserSnapshots(flags, db, profileID, false) }},
+			novelTask{fmt.Sprintf("user_objectives:%d", profileID), func() (int, error) { return syncUserObjectives(flags, db, profileID) }},
+			novelTask{fmt.Sprintf("user_snapshots:%d", profileID), func() (int, error) { return syncUserSnapshots(flags, db, profileID, false) }},
 		)
 	}
 	novelTasks = append(novelTasks, novelTask{"finalized_oneonones", func() (int, error) {
@@ -1164,12 +1196,16 @@ func doSync(ctx context.Context, flags *rootFlags, progress io.Writer) error {
 	go func() { novelWg.Wait(); close(novelResultCh) }()
 
 	for r := range novelResultCh {
-		if progress == nil {
+		if r.err != nil {
+			if progress != nil {
+				fmt.Fprintf(progress, "  %s: warning: %v\n", r.name, r.err)
+			}
 			continue
 		}
-		if r.err != nil {
-			fmt.Fprintf(progress, "  %s: warning: %v\n", r.name, r.err)
-		} else {
+		// Record sync_state so 'doctor' and other runtime-truth surfaces see
+		// these per-user resources instead of reporting them absent.
+		_ = db.SaveSyncState(r.name, "", r.count)
+		if progress != nil {
 			fmt.Fprintf(progress, "  %s: %d synced\n", r.name, r.count)
 		}
 	}
@@ -1182,15 +1218,21 @@ func doSync(ctx context.Context, flags *rootFlags, progress io.Writer) error {
 				if progress != nil {
 					fmt.Fprintf(progress, "  report %d objectives: warning: %v\n", rid, err)
 				}
-			} else if progress != nil {
-				fmt.Fprintf(progress, "  report %d objectives: %d synced\n", rid, count)
+			} else {
+				_ = db.SaveSyncState(fmt.Sprintf("user_objectives:%d", rid), "", count)
+				if progress != nil {
+					fmt.Fprintf(progress, "  report %d objectives: %d synced\n", rid, count)
+				}
 			}
 			if count, err := syncUserSnapshots(flags, db, rid, false); err != nil {
 				if progress != nil {
 					fmt.Fprintf(progress, "  report %d snapshots: warning: %v\n", rid, err)
 				}
-			} else if progress != nil {
-				fmt.Fprintf(progress, "  report %d snapshots: %d synced\n", rid, count)
+			} else {
+				_ = db.SaveSyncState(fmt.Sprintf("user_snapshots:%d", rid), "", count)
+				if progress != nil {
+					fmt.Fprintf(progress, "  report %d snapshots: %d synced\n", rid, count)
+				}
 			}
 		}
 	}
