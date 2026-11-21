@@ -102,13 +102,10 @@ func (c *Config) AuthHeader() string {
 	if c.AuthHeaderVal != "" {
 		return c.AuthHeaderVal
 	}
-	// Env-var token wins over file-stored AccessToken (env > config convention).
 	if c.SevengeeseSession != "" {
-		c.AuthSource = "env:SEVENGEESE_SESSION"
 		return c.SevengeeseSession
 	}
 	if c.AccessToken != "" {
-		c.AuthSource = "browser"
 		return c.AccessToken
 	}
 	return ""

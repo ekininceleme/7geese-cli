@@ -4,7 +4,7 @@ changelog:
   disable: true
 builds:
   - id: 7geese-cli-darwin
-    main: ./cmd/7geese-pp-cli
+    main: ./cmd/7geese-cli
     binary: 7geese-cli
     env:
       - CGO_ENABLED=1
@@ -15,7 +15,7 @@ builds:
       - darwin_arm64
 
   - id: 7geese-cli-other
-    main: ./cmd/7geese-pp-cli
+    main: ./cmd/7geese-cli
     binary: 7geese-cli
     env:
       - CGO_ENABLED=0

@@ -15,7 +15,7 @@ func newMeSchemaCmd(_ *rootFlags) *cobra.Command {
 		Short: "Print the JSON Schema for the 'me export' output",
 		Long:  `Prints a JSON Schema describing the structure of the JSON produced by 'me export'.`,
 		Example: `  7geese-cli me schema
-  7geese-cli me schema | jq '.properties.objectives'`,
+  7geese-cli me schema | jq '.["$defs"].exportObjective'`,
 		Annotations: map[string]string{"mcp:read-only": "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			schema := jsonschema.Reflect(&exportOutput{})

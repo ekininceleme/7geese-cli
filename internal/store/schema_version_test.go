@@ -265,7 +265,7 @@ func TestOpenReadOnly_RejectsWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed open: %v", err)
 	}
-	if _, err := rw.DB().Exec(`INSERT INTO resources (id, resource_type, data) VALUES ('seed', 'thing', '{}')`); err != nil {
+	if _, err := rw.DB().Exec(`INSERT INTO resources (id, resource_type, owner_id, data, synced_at, updated_at) VALUES ('seed', 'thing', 0, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`); err != nil {
 		t.Fatalf("seed insert: %v", err)
 	}
 	rw.Close()
@@ -280,13 +280,13 @@ func TestOpenReadOnly_RejectsWrites(t *testing.T) {
 		name string
 		stmt string
 	}{
-		{"insert", `INSERT INTO resources (id, resource_type, data) VALUES ('x', 'y', '{}')`},
+		{"insert", `INSERT INTO resources (id, resource_type, owner_id, data, synced_at, updated_at) VALUES ('x', 'y', 0, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`},
 		{"update", `UPDATE resources SET resource_type = 'hijacked' WHERE id = 'seed'`},
 		{"delete", `DELETE FROM resources WHERE id = 'seed'`},
-		{"replace", `REPLACE INTO resources (id, resource_type, data) VALUES ('seed', 'evil', '{}')`},
+		{"replace", `REPLACE INTO resources (id, resource_type, owner_id, data, synced_at, updated_at) VALUES ('seed', 'evil', 0, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`},
 		// CTE-wrapped INSERT is load-bearing: it justifies leaving WITH
 		// out of the handleSQL blocklist so SELECT-form CTEs work.
-		{"cte_insert", `WITH stale AS (SELECT id FROM resources) INSERT INTO resources (id, resource_type, data) SELECT id || '-evil', 'thing', '{}' FROM stale`},
+		{"cte_insert", `WITH stale AS (SELECT id FROM resources) INSERT INTO resources (id, resource_type, owner_id, data, synced_at, updated_at) SELECT id || '-evil', 'thing', 0, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM stale`},
 	}
 	for _, w := range writes {
 		if _, err := ro.DB().Exec(w.stmt); err == nil {

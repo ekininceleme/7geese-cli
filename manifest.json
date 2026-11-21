@@ -1,6 +1,6 @@
 {
   "manifest_version": "0.3",
-  "name": "7geese-pp-mcp",
+  "name": "7geese-mcp",
   "display_name": "7Geese",
   "version": "4.2.0",
   "description": "7Geese API surface as MCP tools.",
@@ -10,9 +10,9 @@
   "license": "Apache-2.0",
   "server": {
     "type": "binary",
-    "entry_point": "bin/7geese-pp-mcp",
+    "entry_point": "bin/7geese-mcp",
     "mcp_config": {
-      "command": "${__dirname}/bin/7geese-pp-mcp",
+      "command": "${__dirname}/bin/7geese-mcp",
       "args": [],
       "env": {
         "SEVENGEESE_SESSION": "${user_config.sevengeese_session}"

@@ -3,21 +3,15 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
-	gosync "sync"
 	"time"
 
-	"7geese-cli/internal/config"
 	"7geese-cli/internal/store"
 	"github.com/spf13/cobra"
 )
-
-type gqlSyncWG = gosync.WaitGroup
 
 func newOneononesHistoryCmd(flags *rootFlags) *cobra.Command {
 	var dbPath string
@@ -492,57 +486,53 @@ func resolveUserProfileName(db *store.Store, profileURI string) string {
 
 // --- GraphQL support ---
 
+const (
+	meetingQuestionLimit = 200
+	meetingNoteLimit     = 100
+	meetingCommentLimit  = 300
+)
+
 const gqlFinalizedQuery = `query getFinalizedOneonone($oneononeId: Int!) {
   oneonone(pk: $oneononeId) {
     name
-    facilitator { pk fullName __typename }
-    participant  { pk fullName __typename }
+    facilitator { pk fullName }
+    participant  { pk fullName }
     questionSet {
       questions: typedQuestions(first: 200) {
+        pageInfo { hasNextPage }
         edges {
           node {
             ... on OneOnOneQuestionInterface {
               pk
               content: title
               description
-              notes(first: 10) {
+              notes(first: 100) {
+                pageInfo { hasNextPage }
                 edges {
                   node {
                     ... on OneOnOneNoteInterface {
                       pk
-                      creator { pk fullName __typename }
+                      creator { pk fullName }
                       content: textAnswer
-                      __typename
                     }
-                    __typename
                   }
-                  __typename
                 }
-                __typename
               }
-              __typename
             }
-            __typename
           }
-          __typename
         }
-        __typename
       }
-      __typename
     }
     comments(first: 300) {
+      pageInfo { hasNextPage }
       edges {
         node {
           pk
           content
-          creator { pk fullName __typename }
-          __typename
+          creator { pk fullName }
         }
-        __typename
       }
-      __typename
     }
-    __typename
   }
 }`
 
@@ -562,7 +552,8 @@ type gqlQuestionNode struct {
 	Content     string `json:"content"`
 	Description string `json:"description"`
 	Notes       struct {
-		Edges []struct {
+		PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+		Edges    []struct {
 			Node gqlNoteNode `json:"node"`
 		} `json:"edges"`
 	} `json:"notes"`
@@ -580,153 +571,74 @@ type gqlMeeting struct {
 	Participant gqlUser `json:"participant"`
 	QuestionSet struct {
 		Questions struct {
-			Edges []struct {
+			PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+			Edges    []struct {
 				Node gqlQuestionNode `json:"node"`
 			} `json:"edges"`
 		} `json:"questions"`
 	} `json:"questionSet"`
 	Comments struct {
-		Edges []struct {
+		PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+		Edges    []struct {
 			Node gqlComment `json:"node"`
 		} `json:"edges"`
 	} `json:"comments"`
 }
 
-func fetchMeetingFromGraphQL(flags *rootFlags, meetingID string) (*gqlMeeting, error) {
-	cfg, err := config.Load(flags.configPath)
-	if err != nil || cfg.SevengeeseSession == "" {
-		return nil, fmt.Errorf("no auth")
+func fetchFinalizedMeeting(api *syncAPI, meetingID int) (*gqlMeeting, error) {
+	var data struct {
+		Oneonone *gqlMeeting `json:"oneonone"`
 	}
-
-	id, err := strconv.Atoi(meetingID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid meeting ID: %w", err)
-	}
-
-	body, _ := json.Marshal(map[string]any{
-		"operationName": "getFinalizedOneonone",
-		"variables":     map[string]any{"oneononeId": id},
-		"query":         gqlFinalizedQuery,
-	})
-
-	req, err := http.NewRequest("POST", cfg.BaseURL+"/graphql?opname=getFinalizedOneonone", bytes.NewReader(body))
+	err := api.graphQL("getFinalizedOneonone", "/oneonone/"+strconv.Itoa(meetingID), gqlFinalizedQuery, map[string]any{
+		"oneononeId": meetingID,
+	}, &data)
 	if err != nil {
 		return nil, err
 	}
-	referer := cfg.BaseURL + "/oneonone/" + meetingID
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Cookie", "sgsession4="+cfg.SevengeeseSession+"; sgcsrftoken4="+cfg.SevengeeseCSRF)
-	req.Header.Set("X-CSRFToken", cfg.SevengeeseCSRF)
-	req.Header.Set("Referer", referer)
-	req.Header.Set("X-HREF", referer)
-	req.Header.Set("Origin", cfg.BaseURL)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
+	meeting := data.Oneonone
+	if meeting == nil {
+		return nil, fmt.Errorf("1:1 meeting %d is in the meeting list but its notes are not visible", meetingID)
 	}
-	defer resp.Body.Close()
-
-	var envelope struct {
-		Data struct {
-			Oneonone gqlMeeting `json:"oneonone"`
-		} `json:"data"`
+	if meeting.QuestionSet.Questions.PageInfo == nil || meeting.Comments.PageInfo == nil {
+		return nil, fmt.Errorf("1:1 meeting %d has no page information for its questions or comments", meetingID)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return nil, err
+	if meeting.QuestionSet.Questions.PageInfo.HasNextPage {
+		return nil, fmt.Errorf("1:1 meeting %d has more than %d questions", meetingID, meetingQuestionLimit)
 	}
-	m := envelope.Data.Oneonone
-	return &m, nil
+	if meeting.Comments.PageInfo.HasNextPage {
+		return nil, fmt.Errorf("1:1 meeting %d has more than %d comments", meetingID, meetingCommentLimit)
+	}
+	meeting.QuestionSet.Questions.PageInfo = nil
+	meeting.Comments.PageInfo = nil
+	for i := range meeting.QuestionSet.Questions.Edges {
+		question := &meeting.QuestionSet.Questions.Edges[i].Node
+		if question.Notes.PageInfo == nil {
+			return nil, fmt.Errorf("1:1 meeting %d question %d has no page information for its notes", meetingID, question.PK)
+		}
+		if question.Notes.PageInfo.HasNextPage {
+			return nil, fmt.Errorf("1:1 meeting %d question %d has more than %d notes", meetingID, question.PK, meetingNoteLimit)
+		}
+		question.Notes.PageInfo = nil
+	}
+	return meeting, nil
 }
 
-// syncFinalizedMeetings fetches both participants' notes via GraphQL for every
-// completed meeting and stores the result in the local store as
-// "finalized_oneonones". Called by the sync command after the main REST sync.
-// Already-stored meetings are skipped unless force is true.
-// Calls are parallelised with up to 8 workers to avoid sequential round-trip cost.
-func syncFinalizedMeetings(flags *rootFlags, db *store.Store, force bool) (int, error) {
-	rows, err := db.Query(`
-		SELECT CAST(json_extract(data,'$.id') AS INTEGER)
-		FROM resources
-		WHERE resource_type = 'oneonones'
-		  AND json_extract(data,'$.status') = 1
-		ORDER BY json_extract(data,'$.start_datetime') DESC
-	`)
+func fetchFinalizedMeetings(api *syncAPI, meetingIDs []int) ([]store.Record, error) {
+	meetings, err := fetchEach(meetingIDs, func(id int) (*gqlMeeting, error) {
+		return fetchFinalizedMeeting(api, id)
+	})
 	if err != nil {
-		return 0, fmt.Errorf("listing meetings: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			continue
+	records := make([]store.Record, 0, len(meetings))
+	for i, meeting := range meetings {
+		data, err := json.Marshal(meeting)
+		if err != nil {
+			return nil, fmt.Errorf("encoding 1:1 meeting %d: %w", meetingIDs[i], err)
 		}
-		ids = append(ids, id)
+		records = append(records, store.Record{ID: strconv.Itoa(meetingIDs[i]), Data: data})
 	}
-	_ = rows.Close()
-
-	// Filter out already-synced meetings before spinning up workers.
-	if !force {
-		var pending []string
-		for _, id := range ids {
-			existing, _ := db.Get("finalized_oneonones", id)
-			if existing == nil {
-				pending = append(pending, id)
-			}
-		}
-		ids = pending
-	}
-
-	if len(ids) == 0 {
-		return 0, nil
-	}
-
-	const workers = 8
-	work := make(chan string, len(ids))
-	for _, id := range ids {
-		work <- id
-	}
-	close(work)
-
-	type result struct {
-		id   string
-		data json.RawMessage
-	}
-	results := make(chan result, len(ids))
-
-	var wg gqlSyncWG
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for id := range work {
-				m, err := fetchMeetingFromGraphQL(flags, id)
-				if err != nil || m == nil {
-					continue
-				}
-				d, err := json.Marshal(m)
-				if err != nil {
-					continue
-				}
-				results <- result{id: id, data: d}
-			}
-		}()
-	}
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	synced := 0
-	for r := range results {
-		if err := db.Upsert("finalized_oneonones", r.id, json.RawMessage(r.data)); err != nil {
-			continue
-		}
-		synced++
-	}
-	return synced, nil
+	return records, nil
 }
 
 func renderGQLNotesInline(w interface{ Write([]byte) (int, error) }, m *gqlMeeting) {

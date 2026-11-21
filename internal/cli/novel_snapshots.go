@@ -3,14 +3,12 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
+	"sort"
+	"strconv"
 	"strings"
-	"sync"
 
-	"7geese-cli/internal/config"
 	"7geese-cli/internal/store"
 )
 
@@ -36,7 +34,8 @@ type gqlSnapshotSection struct {
 	PK    int    `json:"pk"`
 	Title string `json:"title"`
 	Items struct {
-		Edges []struct {
+		PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+		Edges    []struct {
 			Node gqlSnapshotItem `json:"node"`
 		} `json:"edges"`
 	} `json:"items"`
@@ -78,13 +77,15 @@ type gqlSnapshotFull struct {
 		PK       int    `json:"pk"`
 		Title    string `json:"title"`
 		Sections struct {
-			Edges []struct {
+			PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+			Edges    []struct {
 				Node gqlSnapshotSection `json:"node"`
 			} `json:"edges"`
 		} `json:"sections"`
 	} `json:"snapshotGroup"`
 	Answers struct {
-		Edges []struct {
+		PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+		Edges    []struct {
 			Node gqlSnapshotAnswer `json:"node"`
 		} `json:"edges"`
 	} `json:"answers"`
@@ -97,12 +98,14 @@ type gqlPeerFeedbackRequest struct {
 	CuratedReport *struct {
 		PublishedDatetime      string `json:"publishedDatetime"`
 		SortedCuratedQuestions struct {
-			Edges []struct {
+			PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+			Edges    []struct {
 				Node struct {
 					Comment  string          `json:"comment"`
 					Question json.RawMessage `json:"question"`
 					Answers  struct {
-						Edges []struct {
+						PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+						Edges    []struct {
 							Node struct {
 								Answer string `json:"answer"`
 							} `json:"node"`
@@ -114,18 +117,13 @@ type gqlPeerFeedbackRequest struct {
 	} `json:"curatedReport"`
 }
 
-// listSnapshotsQuery uses the HAR-confirmed getReviewOverviewPastReviews pattern.
-// The API has no "all states" wildcard: state is a required exact-match filter,
-// so fetchSnapshotList below calls this once per workflowState value and merges
-// the results to also pick up in-progress reviews, not just completed ones.
 const listSnapshotsQuery = `
-query getReviewOverviewPastReviews($profileId: Int!, $first: Int!, $offset: Int!, $completedState: Int!) {
+query getReviewOverviewPastReviews($profileId: Int!, $first: Int!, $offset: Int!) {
   snapshots(
     orderBy: "-created"
     forUser: $profileId
     first: $first
     offset: $offset
-    state: $completedState
   ) {
     totalCount
     edges {
@@ -235,7 +233,11 @@ fragment snapshotSection on SectionNode {
   description
   descriptionDataType
   managerOnly
-  items(first: 90) {
+  items(first: 300) {
+    pageInfo {
+      hasNextPage
+      __typename
+    }
     edges {
       node {
         ... on TextQuestionItemNode {
@@ -977,7 +979,11 @@ fragment snapshotsSingleFragment on SnapshotNode {
       }
       __typename
     }
-    sections(first: 21) {
+    sections(first: 200) {
+      pageInfo {
+        hasNextPage
+        __typename
+      }
       edges {
         node {
           ...snapshotSection
@@ -1000,7 +1006,11 @@ fragment snapshotsSingleFragment on SnapshotNode {
     }
     __typename
   }
-  answers(first: 300) {
+  answers(first: 1000) {
+    pageInfo {
+      hasNextPage
+      __typename
+    }
     edges {
       node {
         ... on TextItemAnswerNode {
@@ -1208,12 +1218,20 @@ fragment snapshotsSingleFragment on SnapshotNode {
       respondentsNamesVisible
       newResponseCount
       sortedCuratedQuestions(first: 80) {
+        pageInfo {
+          hasNextPage
+          __typename
+        }
         edges {
           node {
             pk
             comment
             includeAnswers
             answers(first: 80) {
+              pageInfo {
+                hasNextPage
+                __typename
+              }
               totalCount
               edges {
                 node {
@@ -1253,170 +1271,137 @@ query getSingleSnapshot($snapshotId: Int!) {
 }
 `
 
-func snapshotGraphQLRequest(cfg *config.Config, opname, query string, variables map[string]any) (*http.Request, error) {
-	body, _ := json.Marshal(map[string]any{
-		"operationName": opname,
-		"variables":     variables,
-		"query":         query,
-	})
-	req, err := http.NewRequest("POST", cfg.BaseURL+"/graphql?opname="+opname, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	referer := cfg.BaseURL + "/reviews/"
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Cookie", "sgsession4="+cfg.SevengeeseSession+"; sgcsrftoken4="+cfg.SevengeeseCSRF)
-	req.Header.Set("X-CSRFToken", cfg.SevengeeseCSRF)
-	req.Header.Set("Referer", referer)
-	req.Header.Set("X-HREF", referer)
-	req.Header.Set("Origin", cfg.BaseURL)
-	return req, nil
-}
+const snapshotListPageSize = 50
 
-// snapshotWorkflowStates are the values snapshotStateName recognizes:
-// 0=employee_input, 1=manager_input, 2=skip_level_approval, 3=admin_approval,
-// 4=completed, 5=acknowledgment.
-var snapshotWorkflowStates = []int{0, 1, 2, 3, 4, 5}
-
-func fetchSnapshotList(cfg *config.Config, profileID int) ([]gqlSnapshotSummary, error) {
+func fetchSnapshotIDs(api *syncAPI, profileID int) ([]int, error) {
 	seen := map[int]bool{}
-	var all []gqlSnapshotSummary
-	for _, state := range snapshotWorkflowStates {
-		offset := 0
-		const limit = 50
-		for {
-			req, err := snapshotGraphQLRequest(cfg, "getReviewOverviewPastReviews", listSnapshotsQuery, map[string]any{
-				"profileId":      profileID,
-				"first":          limit,
-				"offset":         offset,
-				"completedState": state,
-			})
-			if err != nil {
-				return nil, err
+	received := 0
+	for {
+		var data struct {
+			Snapshots *struct {
+				TotalCount *int `json:"totalCount"`
+				Edges      []struct {
+					Node gqlSnapshotSummary `json:"node"`
+				} `json:"edges"`
+			} `json:"snapshots"`
+		}
+		err := api.graphQL("getReviewOverviewPastReviews", "/reviews/", listSnapshotsQuery, map[string]any{
+			"profileId": profileID,
+			"first":     snapshotListPageSize,
+			"offset":    received,
+		}, &data)
+		if err != nil {
+			return nil, err
+		}
+		if data.Snapshots == nil || data.Snapshots.TotalCount == nil {
+			return nil, fmt.Errorf("GraphQL getReviewOverviewPastReviews returned no review list with totalCount for user %d", profileID)
+		}
+		for _, edge := range data.Snapshots.Edges {
+			if edge.Node.PK == 0 {
+				return nil, fmt.Errorf("review list of user %d has a review with no pk", profileID)
 			}
-			resp, err := syncHTTPClient.Do(req)
-			if err != nil {
-				return nil, err
+			seen[edge.Node.PK] = true
+		}
+		received += len(data.Snapshots.Edges)
+		total := *data.Snapshots.TotalCount
+		if received >= total || len(data.Snapshots.Edges) == 0 {
+			if len(seen) != total {
+				return nil, fmt.Errorf("review list of user %d returned %d different reviews of %d; the list is not stable or it changed during the sync, run it again", profileID, len(seen), total)
 			}
-			var envelope struct {
-				Data struct {
-					Snapshots struct {
-						Edges []struct {
-							Node gqlSnapshotSummary `json:"node"`
-						} `json:"edges"`
-					} `json:"snapshots"`
-				} `json:"data"`
-			}
-			err = json.NewDecoder(resp.Body).Decode(&envelope)
-			resp.Body.Close()
-			if err != nil {
-				return nil, err
-			}
-			batch := envelope.Data.Snapshots.Edges
-			for _, e := range batch {
-				if seen[e.Node.PK] {
-					continue
-				}
-				seen[e.Node.PK] = true
-				all = append(all, e.Node)
-			}
-			if len(batch) < limit {
-				break
-			}
-			offset += limit
+			break
 		}
 	}
-	return all, nil
+	ids := make([]int, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	return ids, nil
 }
 
-func fetchSingleSnapshot(cfg *config.Config, snapshotID int) (*gqlSnapshotFull, error) {
-	req, err := snapshotGraphQLRequest(cfg, "getSingleSnapshot", getSingleSnapshotQuery, map[string]any{
+func closeSnapshotPage(snapshotID int, what string, pageInfo **gqlPageInfo) error {
+	if *pageInfo == nil {
+		return fmt.Errorf("review %d has no page information for its %s", snapshotID, what)
+	}
+	if (*pageInfo).HasNextPage {
+		return fmt.Errorf("review %d has more %s than one request returns; the review is not complete", snapshotID, what)
+	}
+	*pageInfo = nil
+	return nil
+}
+
+func checkSnapshotComplete(snapshot *gqlSnapshotFull) error {
+	if err := closeSnapshotPage(snapshot.PK, "sections", &snapshot.SnapshotGroup.Sections.PageInfo); err != nil {
+		return err
+	}
+	sections := snapshot.SnapshotGroup.Sections.Edges
+	for i := range sections {
+		if err := closeSnapshotPage(snapshot.PK, "section items", &sections[i].Node.Items.PageInfo); err != nil {
+			return err
+		}
+	}
+	if err := closeSnapshotPage(snapshot.PK, "answers", &snapshot.Answers.PageInfo); err != nil {
+		return err
+	}
+	if snapshot.PeerFeedbackRequest == nil || snapshot.PeerFeedbackRequest.CuratedReport == nil {
+		return nil
+	}
+	questions := &snapshot.PeerFeedbackRequest.CuratedReport.SortedCuratedQuestions
+	if err := closeSnapshotPage(snapshot.PK, "peer feedback questions", &questions.PageInfo); err != nil {
+		return err
+	}
+	for i := range questions.Edges {
+		if err := closeSnapshotPage(snapshot.PK, "peer feedback answers", &questions.Edges[i].Node.Answers.PageInfo); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func fetchSnapshot(api *syncAPI, snapshotID int) (*gqlSnapshotFull, error) {
+	var data struct {
+		Snapshot *gqlSnapshotFull `json:"snapshot"`
+	}
+	err := api.graphQL("getSingleSnapshot", "/reviews/", getSingleSnapshotQuery, map[string]any{
 		"snapshotId": snapshotID,
+	}, &data)
+	if err != nil {
+		return nil, err
+	}
+	if data.Snapshot == nil {
+		return nil, fmt.Errorf("review %d is in the review list but its content is not visible", snapshotID)
+	}
+	if data.Snapshot.PK != snapshotID {
+		return nil, fmt.Errorf("review %d was requested but review %d was returned", snapshotID, data.Snapshot.PK)
+	}
+	if err := checkSnapshotComplete(data.Snapshot); err != nil {
+		return nil, err
+	}
+	return data.Snapshot, nil
+}
+
+func fetchUserSnapshots(api *syncAPI, profileID int) ([]store.Record, error) {
+	ids, err := fetchSnapshotIDs(api, profileID)
+	if err != nil {
+		return nil, err
+	}
+	snapshots, err := fetchEach(ids, func(id int) (*gqlSnapshotFull, error) {
+		return fetchSnapshot(api, id)
 	})
 	if err != nil {
 		return nil, err
 	}
-	resp, err := syncHTTPClient.Do(req)
-	if err != nil {
-		return nil, err
+	records := make([]store.Record, 0, len(snapshots))
+	for i, snapshot := range snapshots {
+		data, err := json.Marshal(snapshot)
+		if err != nil {
+			return nil, fmt.Errorf("encoding review %d: %w", ids[i], err)
+		}
+		records = append(records, store.Record{ID: strconv.Itoa(ids[i]), Data: data})
 	}
-	defer resp.Body.Close()
-	var envelope struct {
-		Data struct {
-			Snapshot gqlSnapshotFull `json:"snapshot"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return nil, err
-	}
-	return &envelope.Data.Snapshot, nil
+	return records, nil
 }
 
-func syncUserSnapshots(flags *rootFlags, db *store.Store, profileID int, force bool) (int, error) {
-	cfg, err := config.Load(flags.configPath)
-	if err != nil || cfg.SevengeeseSession == "" {
-		return 0, fmt.Errorf("no auth configured")
-	}
-	summaries, err := fetchSnapshotList(cfg, profileID)
-	if err != nil {
-		return 0, fmt.Errorf("listing snapshots: %w", err)
-	}
-
-	resourceType := fmt.Sprintf("user_snapshots:%d", profileID)
-	var toFetch []gqlSnapshotSummary
-	if force {
-		toFetch = summaries
-	} else {
-		for _, s := range summaries {
-			if existing, _ := db.Get(resourceType, fmt.Sprintf("%d", s.PK)); existing == nil {
-				toFetch = append(toFetch, s)
-			}
-		}
-	}
-	if len(toFetch) == 0 {
-		return 0, nil
-	}
-
-	type result struct {
-		id   string
-		data json.RawMessage
-	}
-
-	const maxConcurrent = 5
-	resultCh := make(chan result, len(toFetch))
-	sem := make(chan struct{}, maxConcurrent)
-
-	var wg sync.WaitGroup
-	for _, s := range toFetch {
-		wg.Add(1)
-		go func(pk int) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			snap, err := fetchSingleSnapshot(cfg, pk)
-			if err != nil {
-				return
-			}
-			data, _ := json.Marshal(snap)
-			resultCh <- result{id: fmt.Sprintf("%d", pk), data: json.RawMessage(data)}
-		}(s.PK)
-	}
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
-	synced := 0
-	for r := range resultCh {
-		if err := db.Upsert(resourceType, r.id, r.data); err != nil {
-			continue
-		}
-		synced++
-	}
-	return synced, nil
-}
-
-// snapshotStateName maps the numeric workflowState to a human-readable label.
 func snapshotStateName(state int) string {
 	switch state {
 	case 0:
@@ -1432,7 +1417,7 @@ func snapshotStateName(state int) string {
 	case 5:
 		return "acknowledgment"
 	default:
-		return "unknown"
+		return fmt.Sprintf("unknown_%d", state)
 	}
 }
 

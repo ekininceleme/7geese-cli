@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"io"
@@ -262,13 +263,14 @@ func classifyDeleteError(err error, flags *rootFlags) error {
 }
 
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
 	if max <= 3 {
-		return s[:max]
+		return string(runes[:max])
 	}
-	return s[:max-3] + "..."
+	return string(runes[:max-3]) + "..."
 }
 
 func newTabWriter(w io.Writer) *tabwriter.Writer {
@@ -1280,23 +1282,25 @@ func defaultDBPath(name string) string {
 	return filepath.Join(home, ".local", "share", name, "data.db")
 }
 
-// sharedStdin is a single reader over os.Stdin shared across all promptConfirm
-// calls so that sequential prompts don't lose input to buffer over-read.
 var sharedStdin = bufio.NewReader(os.Stdin)
 
-// promptConfirm prints prompt to stderr and reads a Y/n response.
-// Returns true if the user confirms or --yes is set.
-// Returns false when stdin is not a TTY, --no-input is set, or the user answers 'n'.
+var stdinIsTerminal = func() bool {
+	return isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
+}
+
 func promptConfirm(cmd *cobra.Command, flags *rootFlags, prompt string) bool {
-	if flags.noInput || !isTerminal(os.Stdin) {
-		return false
-	}
 	if flags.yes {
 		fmt.Fprint(cmd.ErrOrStderr(), prompt+"Y\n")
 		return true
 	}
+	if flags.noInput || !stdinIsTerminal() {
+		return false
+	}
 	fmt.Fprint(cmd.ErrOrStderr(), prompt)
-	line, _ := sharedStdin.ReadString('\n')
+	line, err := sharedStdin.ReadString('\n')
 	resp := strings.ToLower(strings.TrimSpace(line))
+	if err != nil {
+		return resp == "y" || resp == "yes"
+	}
 	return resp == "" || resp == "y" || resp == "yes"
 }

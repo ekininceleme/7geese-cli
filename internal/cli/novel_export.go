@@ -3,10 +3,12 @@
 package cli
 
 import (
-	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +18,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const exportDateLayout = "2006-01-02"
+
+var browserLogin = func() (string, string, error) {
+	session, csrf, _, err := extractKookyCookies(resolveBrowserNames(false, false, false))
+	return session, csrf, err
+}
+
 func newMeExportCmd(flags *rootFlags) *cobra.Command {
 	var dbPath string
 	var output string
@@ -24,159 +33,228 @@ func newMeExportCmd(flags *rootFlags) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "export",
-		Short: "Export a complete profile JSON: objectives, 1:1s, recognition, and reviews",
-		Long: `Reads the local SQLite store and writes a single JSON file containing
-all data for the specified user (defaults to you).
+		Short: "Export a complete profile JSON: objectives, 1:1s, recognition, reviews, check-ins and notifications",
+		Long: `Reads the local SQLite store and writes one JSON document with all data
+for the specified user (the default is you).
 
-Sections included:
-  profile      — name, email, position, hire date, manager
-  objectives   — personal OKRs with nested key results and check-in history
-  oneonones    — all 1:1 meetings with full Q&A from both participants
-  recognition  — badges received and given
-  reviews      — quarterly performance cycle records
+Sections:
+  profile        name, email, position, hire date, manager
+  objectives     OKRs with key results and the full check-in history
+  reviews        performance reviews in all workflow states
+  oneonones      1:1 meetings with the questions and answers of the two participants
+  recognitions   badges received and given
+  checkins       check-ins that you posted
+  notifications  your notification feed
+  direct_reports profile, objectives and reviews of each direct report
 
-Run 'sync' first to populate the store.`,
+The sections oneonones, recognitions, checkins and notifications are only
+available for you, because 7Geese gives them only for the session user.
+The data of other users is limited to your direct reports.
+
+The field synced_at shows the age of the local data. Run 'sync' to refresh it.
+If the local data is not complete, the command asks to run 'sync'.`,
 		Example: `  7geese-cli me export
   7geese-cli me export --output my-data.json
-  7geese-cli me export | jq '.objectives'
-  7geese-cli me export --user "Heather Moorhead"`,
+  7geese-cli me export | jq '.me.objectives'
+  7geese-cli me export --since 2026-01-01
+  7geese-cli me export --user 123456`,
 		Annotations: map[string]string{"mcp:read-only": "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Guided flow: check auth, then data, prompting to fix each if missing.
-			cfg, cfgErr := config.Load(flags.configPath)
-			if cfgErr == nil && cfg.SevengeeseSession == "" {
-				if !promptConfirm(cmd, flags, "Not authenticated. Run auth login now? [Y/n] ") {
-					return fmt.Errorf("not authenticated — run '7geese-cli auth login' first")
+			if since != "" {
+				if _, err := time.Parse(exportDateLayout, since); err != nil {
+					return fmt.Errorf("invalid --since value %q: use the format YYYY-MM-DD", since)
 				}
-				fmt.Fprintln(cmd.ErrOrStderr(), "Reading session from browser...")
-				browsers := resolveBrowserNames(false, false, false)
-				session, csrf, _, authErr := extractKookyCookies(browsers)
-				if authErr != nil {
-					return fmt.Errorf("auth login failed: %w\nMake sure you are logged into app.7geese.com in Chrome or Firefox", authErr)
-				}
-				if err := cfg.SaveCookies(session, csrf); err != nil {
-					return fmt.Errorf("saving session: %w", err)
-				}
-				fmt.Fprintln(cmd.ErrOrStderr(), "Authenticated.")
 			}
-
 			if dbPath == "" {
 				dbPath = defaultDBPath("7geese-cli")
 			}
-
-			// Check if data exists; if not, offer to sync.
-			needsSync := false
-			db, openErr := store.OpenReadOnly(dbPath)
-			if openErr != nil {
-				needsSync = true
-			} else {
-				if _, err := resolveExportUser(db, userFilter); err != nil {
-					needsSync = true
-				}
-				db.Close()
-			}
-
-			if needsSync {
-				if !promptConfirm(cmd, flags, "No local data found. Run sync to fetch from 7Geese now? [Y/n] ") {
-					return fmt.Errorf("no local data — run '7geese-cli sync' first")
-				}
-				fmt.Fprintln(cmd.ErrOrStderr(), "Syncing...")
-				prevHumanFriendly := humanFriendly
-				humanFriendly = true
-				syncErr := doSync(context.Background(), flags, cmd.ErrOrStderr())
-				humanFriendly = prevHumanFriendly
-				if syncErr != nil {
-					return fmt.Errorf("sync failed: %w", syncErr)
-				}
-				fmt.Fprintln(cmd.ErrOrStderr(), "Sync complete.")
-			}
-
-			db, err := store.OpenReadOnly(dbPath)
-			if err != nil {
-				return fmt.Errorf("opening local database: %w", err)
-			}
-			defer db.Close()
-
-			profileID, err := resolveExportUser(db, userFilter)
+			db, err := openSyncedDatabase(cmd, flags, dbPath)
 			if err != nil {
 				return err
 			}
+			defer db.Close()
 
-			out := exportOutput{
-				ExportedAt: time.Now().UTC().Format(time.RFC3339),
-				Me:         buildExportProfile(db, profileID, since),
+			out, err := buildExport(db, userFilter, since, time.Now())
+			if err != nil {
+				return err
 			}
-			for _, rid := range fetchDirectReportIDs(db, profileID) {
-				p := buildExportProfile(db, rid, since)
-				p.Oneonones = nil
-				out.DirectReports = append(out.DirectReports, p)
-			}
-
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
 
 			if output != "" && output != "-" {
 				f, err := os.Create(output)
 				if err != nil {
 					return fmt.Errorf("creating output file: %w", err)
 				}
-				defer f.Close()
-				enc = json.NewEncoder(f)
+				enc := json.NewEncoder(f)
 				enc.SetIndent("", "  ")
 				if err := enc.Encode(out); err != nil {
-					return err
+					f.Close()
+					return fmt.Errorf("writing output file: %w", err)
+				}
+				if err := f.Close(); err != nil {
+					return fmt.Errorf("closing output file: %w", err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Exported to %s\n", output)
 				return nil
 			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
 			return enc.Encode(out)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "", "Database path")
-	cmd.Flags().StringVarP(&output, "output", "o", "", "Write JSON to a file (default: stdout — pipe to redirect)")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Write JSON to a file (default: stdout)")
 	cmd.Flags().StringVar(&userFilter, "user", "", "User to export: name, email, or numeric ID (default: you)")
-	cmd.Flags().StringVar(&since, "since", "", "Inclusive start date (YYYY-MM-DD): exclude data older than this date")
+	cmd.Flags().StringVar(&since, "since", "", "Start date (YYYY-MM-DD, 00:00 local time): exclude data older than this date")
 	return cmd
 }
 
-// --- export types ---
+func requiredDatasets(sessionUser int) []store.DatasetKey {
+	return []store.DatasetKey{
+		sessionDataset(resourceUserProfile),
+		sessionDataset(resourceOneonones),
+		sessionDataset(resourceFinalizedOneonones),
+		sessionDataset(resourceRecognitionGiven),
+		sessionDataset(resourceRecognitionGot),
+		sessionDataset(resourceCheckins),
+		sessionDataset(resourceNotifications),
+		userDataset(resourceUserObjectives, sessionUser),
+		userDataset(resourceUserSnapshots, sessionUser),
+	}
+}
+
+func missingSyncReason(db *store.Store) (string, error) {
+	sessionUser, found, err := storedSessionUser(db)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "no sync was completed for this database", nil
+	}
+	for _, key := range requiredDatasets(sessionUser) {
+		_, synced, err := db.DatasetSyncedAt(key)
+		if err != nil {
+			return "", err
+		}
+		if !synced {
+			return fmt.Sprintf("the dataset %s is not synced", key), nil
+		}
+	}
+	return "", nil
+}
+
+func ensureSession(cmd *cobra.Command, flags *rootFlags) error {
+	cfg, err := config.Load(flags.configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	if cfg.SevengeeseSession != "" {
+		return nil
+	}
+	if !promptConfirm(cmd, flags, "Not authenticated. Run auth login now? [Y/n] ") {
+		return errors.New("not authenticated: run '7geese-cli auth login' first")
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), "Reading session from browser...")
+	session, csrf, err := browserLogin()
+	if err != nil {
+		return fmt.Errorf("auth login failed: %w\nMake sure you are logged into app.7geese.com in Chrome or Firefox", err)
+	}
+	if err := cfg.SaveCookies(session, csrf); err != nil {
+		return fmt.Errorf("saving session: %w", err)
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), "Authenticated.")
+	return nil
+}
+
+func openSyncedDatabase(cmd *cobra.Command, flags *rootFlags, dbPath string) (*store.Store, error) {
+	var db *store.Store
+	reason := "the local database does not exist"
+	_, statErr := os.Stat(dbPath)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("checking local database: %w", statErr)
+	}
+	if statErr == nil {
+		opened, err := store.OpenWithContext(cmd.Context(), dbPath)
+		if err != nil {
+			return nil, fmt.Errorf("opening local database: %w", err)
+		}
+		reason, err = missingSyncReason(opened)
+		if err != nil {
+			opened.Close()
+			return nil, err
+		}
+		if reason == "" {
+			return opened, nil
+		}
+		db = opened
+	}
+
+	fail := func(err error) (*store.Store, error) {
+		if db != nil {
+			db.Close()
+		}
+		return nil, err
+	}
+	if !promptConfirm(cmd, flags, fmt.Sprintf("Local data is not complete: %s. Run sync now? [Y/n] ", reason)) {
+		return fail(fmt.Errorf("local data is not complete: %s; run '7geese-cli sync' first", reason))
+	}
+	if err := ensureSession(cmd, flags); err != nil {
+		return fail(err)
+	}
+	if db == nil {
+		opened, err := store.OpenWithContext(cmd.Context(), dbPath)
+		if err != nil {
+			return nil, fmt.Errorf("opening local database: %w", err)
+		}
+		db = opened
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), "Syncing...")
+	reporter := &humanSyncReporter{out: cmd.ErrOrStderr()}
+	if err := runSync(cmd.Context(), db, syncOptionsFromFlags(flags, reporter)); err != nil {
+		return fail(fmt.Errorf("sync failed: %w", err))
+	}
+	return db, nil
+}
 
 type exportOutput struct {
-	ExportedAt    string        `json:"exported_at" jsonschema:"description=ISO 8601 timestamp of when this export was generated"`
-	Me            exportProfile `json:"me" jsonschema:"description=The authenticated user's full profile and history"`
-	DirectReports []exportProfile `json:"direct_reports,omitempty" jsonschema:"description=Direct reports with the same data shape as me"`
+	ExportedAt    string          `json:"exported_at" jsonschema:"description=ISO 8601 timestamp of when this export was generated"`
+	SyncedAt      string          `json:"synced_at" jsonschema:"description=ISO 8601 timestamp of the oldest sync of the datasets in this export"`
+	Me            exportProfile   `json:"me" jsonschema:"description=The profile and history of the exported user"`
+	DirectReports []exportProfile `json:"direct_reports,omitempty" jsonschema:"description=Direct reports of the session user: profile, objectives and reviews"`
 }
 
 type exportProfile struct {
-	Profile      exportUser        `json:"profile" jsonschema:"description=User profile information"`
-	Objectives   []exportObjective `json:"objectives" jsonschema:"description=OKRs where the user is an owner, stakeholder, or follower"`
-	Oneonones    []exportMeeting   `json:"oneonones,omitempty" jsonschema:"description=1:1 meeting history with full Q&A from both participants"`
-	Recognitions exportRecognition `json:"recognitions" jsonschema:"description=Recognition badges sent and received"`
-	Reviews      []exportReview    `json:"reviews" jsonschema:"description=Completed performance review cycles"`
+	Profile       exportUser            `json:"profile" jsonschema:"description=User profile information"`
+	Objectives    []exportObjective     `json:"objectives" jsonschema:"description=OKRs where the user is an owner, stakeholder, or follower"`
+	Reviews       []exportReview        `json:"reviews" jsonschema:"description=Performance reviews in all workflow states"`
+	Oneonones     *[]exportMeeting      `json:"oneonones,omitempty" jsonschema:"description=1:1 meeting history with questions and answers from the two participants. Only for the session user"`
+	Recognitions  *exportRecognition    `json:"recognitions,omitempty" jsonschema:"description=Recognition badges sent and received. Only for the session user"`
+	Checkins      *[]exportUserCheckin  `json:"checkins,omitempty" jsonschema:"description=Check-ins that the user posted, newest first. Only for the session user"`
+	Notifications *[]exportNotification `json:"notifications,omitempty" jsonschema:"description=Notification feed, newest first. Only for the session user"`
 }
 
 type exportUser struct {
-	ID       int    `json:"id" jsonschema:"description=7Geese user profile ID"`
-	Name     string `json:"name" jsonschema:"description=Full name"`
-	Email    string `json:"email,omitempty" jsonschema:"description=Work email address"`
-	Position string `json:"position,omitempty" jsonschema:"description=Job title or position"`
-	HireDate string `json:"hire_date,omitempty" jsonschema:"description=Date the user joined the organisation (YYYY-MM-DD)"`
-	Manager  string `json:"manager,omitempty" jsonschema:"description=Full name of the user's direct manager"`
+	ID        int    `json:"id" jsonschema:"description=7Geese user profile ID"`
+	Name      string `json:"name" jsonschema:"description=Full name"`
+	Email     string `json:"email,omitempty" jsonschema:"description=Work email address"`
+	Position  string `json:"position,omitempty" jsonschema:"description=Job title or position"`
+	HireDate  string `json:"hire_date,omitempty" jsonschema:"description=Date the user joined the organisation (YYYY-MM-DD)"`
+	ManagerID int    `json:"manager_id,omitempty" jsonschema:"description=7Geese user profile ID of the user's direct manager"`
+	Manager   string `json:"manager,omitempty" jsonschema:"description=Full name of the user's direct manager"`
 }
 
 type exportObjective struct {
 	ID              string          `json:"id" jsonschema:"description=Objective ID"`
 	Name            string          `json:"name" jsonschema:"description=Objective title"`
 	Description     string          `json:"description,omitempty" jsonschema:"description=Optional longer description of the objective"`
-	Type            string          `json:"type" jsonschema:"description=Scope of the objective: personal, team, or org"`
-	ParticipantType string          `json:"participant_type,omitempty" jsonschema:"description=The user's role on this objective: owner, stakeholder, or follower"`
+	Type            string          `json:"type" jsonschema:"description=Scope of the objective: personal, team, org, or unknown_<n> for a value that 7Geese does not document"`
+	ParticipantType string          `json:"participant_type,omitempty" jsonschema:"description=The role of the session user on this objective: owner, stakeholder, or follower. Only for the session user"`
 	Progress        float64         `json:"progress" jsonschema:"description=Overall completion percentage (0–100)"`
 	StartDate       string          `json:"start_date,omitempty" jsonschema:"description=Objective start date (YYYY-MM-DD)"`
-	DueDate         string          `json:"due_date,omitempty" jsonschema:"description=Objective due date (YYYY-MM-DD)"`
-	CompletedDate   string          `json:"completed_date,omitempty" jsonschema:"description=Date the objective was marked complete (YYYY-MM-DD)"`
+	DueDate         string          `json:"due_date,omitempty" jsonschema:"description=Objective due date (ISO 8601)"`
+	CompletedDate   string          `json:"completed_date,omitempty" jsonschema:"description=Date the objective was marked complete (ISO 8601)"`
 	Closed          bool            `json:"closed" jsonschema:"description=Whether the objective is closed (completed or abandoned)"`
 	KeyResults      []exportKR      `json:"key_results,omitempty" jsonschema:"description=Key results nested under this objective"`
-	Checkins        []exportCheckin `json:"checkins,omitempty" jsonschema:"description=Most recent progress check-in"`
+	Checkins        []exportCheckin `json:"checkins,omitempty" jsonschema:"description=Full check-in history of the objective, newest first"`
 }
 
 type exportKR struct {
@@ -184,24 +262,44 @@ type exportKR struct {
 	Name            string  `json:"name" jsonschema:"description=Key result title"`
 	Description     string  `json:"description,omitempty" jsonschema:"description=Optional longer description"`
 	Progress        float64 `json:"progress" jsonschema:"description=Completion percentage (0–100)"`
-	MeasurementType string  `json:"measurement_type,omitempty" jsonschema:"description=How progress is measured: percent, number, currency, or boolean"`
+	MeasurementType string  `json:"measurement_type" jsonschema:"description=How progress is measured: percent, number, currency, boolean, or unknown_<n> for a value that 7Geese does not document"`
+	StartingValue   float64 `json:"starting_value" jsonschema:"description=Value at the start of the key result"`
 	CurrentValue    float64 `json:"current_value" jsonschema:"description=Current measured value"`
 	TargetValue     float64 `json:"target_value" jsonschema:"description=Target value to reach 100% completion"`
 }
 
 type exportCheckin struct {
-	ID               string  `json:"id" jsonschema:"description=Check-in ID"`
-	Date             string  `json:"date" jsonschema:"description=Date the check-in was posted (ISO 8601)"`
-	Message          string  `json:"message,omitempty" jsonschema:"description=Free-text update posted with this check-in"`
-	ProgressSnapshot float64 `json:"progress_at_checkin,omitempty" jsonschema:"description=Progress percentage recorded at the time of this check-in"`
+	ID               string   `json:"id" jsonschema:"description=Check-in ID"`
+	Date             string   `json:"date" jsonschema:"description=Date the check-in was posted (ISO 8601)"`
+	Author           string   `json:"author,omitempty" jsonschema:"description=Full name of the person who posted the check-in"`
+	Message          string   `json:"message,omitempty" jsonschema:"description=Free-text update posted with this check-in"`
+	ProgressSnapshot *float64 `json:"progress_at_checkin,omitempty" jsonschema:"description=Objective progress percentage recorded at the time of this check-in"`
+}
+
+type exportUserCheckin struct {
+	ID               string   `json:"id" jsonschema:"description=Check-in ID"`
+	Date             string   `json:"date" jsonschema:"description=Date the check-in was posted (ISO 8601)"`
+	Message          string   `json:"message,omitempty" jsonschema:"description=Free-text update posted with this check-in"`
+	ObjectiveID      string   `json:"objective_id,omitempty" jsonschema:"description=ID of the objective that the check-in is for"`
+	ObjectiveName    string   `json:"objective_name,omitempty" jsonschema:"description=Title of the objective at the time of the check-in"`
+	ProgressSnapshot *float64 `json:"progress_at_checkin,omitempty" jsonschema:"description=Objective progress percentage recorded at the time of this check-in"`
+}
+
+type exportNotification struct {
+	ID      string `json:"id" jsonschema:"description=Notification ID"`
+	Date    string `json:"date" jsonschema:"description=Date the notification was published (ISO 8601)"`
+	Verb    string `json:"verb,omitempty" jsonschema:"description=Type of the event"`
+	Actor   string `json:"actor,omitempty" jsonschema:"description=Display name of the person who caused the event"`
+	Content string `json:"content,omitempty" jsonschema:"description=Notification text. Can contain HTML"`
 }
 
 type exportMeeting struct {
-	ID        string     `json:"id" jsonschema:"description=1:1 meeting ID"`
-	Date      string     `json:"date" jsonschema:"description=Scheduled date and time of the meeting (ISO 8601)"`
-	With      string     `json:"with" jsonschema:"description=Full name of the other participant"`
-	Status    string     `json:"status" jsonschema:"description=Meeting status: completed or upcoming"`
-	Questions []exportQA `json:"questions,omitempty" jsonschema:"description=Questions and answers from both participants"`
+	ID        string         `json:"id" jsonschema:"description=1:1 meeting ID"`
+	Date      string         `json:"date" jsonschema:"description=Scheduled date and time of the meeting (ISO 8601)"`
+	With      string         `json:"with" jsonschema:"description=Full name of the other participant"`
+	Status    string         `json:"status" jsonschema:"description=Meeting status: completed, upcoming (not completed and the start is in the future), incomplete (not completed and the start is in the past), or unknown_<n> for a value that 7Geese does not document"`
+	Questions []exportQA     `json:"questions,omitempty" jsonschema:"description=Questions and answers from the two participants. Only for completed meetings"`
+	Comments  []exportAnswer `json:"comments,omitempty" jsonschema:"description=Comments on the meeting. Only for completed meetings"`
 }
 
 type exportQA struct {
@@ -211,8 +309,8 @@ type exportQA struct {
 }
 
 type exportAnswer struct {
-	Author string `json:"author" jsonschema:"description=Full name of the person who wrote this answer"`
-	Text   string `json:"text" jsonschema:"description=The answer text"`
+	Author string `json:"author" jsonschema:"description=Full name of the person who wrote this text"`
+	Text   string `json:"text" jsonschema:"description=The text"`
 }
 
 type exportRecognition struct {
@@ -221,12 +319,12 @@ type exportRecognition struct {
 }
 
 type exportReview struct {
-	ID           int                   `json:"id" jsonschema:"description=Performance review cycle ID"`
+	ID           int                   `json:"id" jsonschema:"description=Performance review ID"`
 	Title        string                `json:"title" jsonschema:"description=Name of the review cycle (e.g. 'Q1 2026 Performance Review')"`
-	Period       string                `json:"period" jsonschema:"description=Human-readable quarter label derived from the start date (e.g. Q1 2026)"`
+	Period       string                `json:"period" jsonschema:"description=Shortest calendar period that contains the start and end dates: a quarter (Q1 2026), a half year (H1 2026), a year (2026), or a range of years (2025-2026)"`
 	StartDate    string                `json:"start_date" jsonschema:"description=Review period start date (ISO 8601)"`
 	EndDate      string                `json:"end_date" jsonschema:"description=Review period end date (ISO 8601)"`
-	State        string                `json:"state" jsonschema:"description=Workflow state of the review cycle"`
+	State        string                `json:"state" jsonschema:"description=Workflow state: employee_input, manager_input, skip_level_approval, admin_approval, completed, acknowledgment, or unknown_<n> for a value that 7Geese does not document"`
 	Position     string                `json:"position,omitempty" jsonschema:"description=The user's job title at the time of the review"`
 	Manager      string                `json:"manager,omitempty" jsonschema:"description=Full name of the user's manager for this review"`
 	Sections     []exportReviewSection `json:"sections,omitempty" jsonschema:"description=Review form sections containing questions and answers"`
@@ -240,8 +338,8 @@ type exportReviewSection struct {
 
 type exportReviewQA struct {
 	Question string `json:"question" jsonschema:"description=The review question text"`
-	Employee string `json:"employee,omitempty" jsonschema:"description=The employee's answer"`
-	Manager  string `json:"manager,omitempty" jsonschema:"description=The manager's response"`
+	Employee string `json:"employee,omitempty" jsonschema:"description=The answer of the reviewed user"`
+	Manager  string `json:"manager,omitempty" jsonschema:"description=The answer of the other responder, usually the manager"`
 }
 
 type exportPeerReport struct {
@@ -264,185 +362,383 @@ type exportPeerQuestion struct {
 	Answers  []string `json:"answers,omitempty" jsonschema:"description=Anonymised answers submitted by peers"`
 }
 
-// --- builders ---
-
-func resolveExportUser(db *store.Store, filter string) (int, error) {
-	if filter != "" {
-		// Try numeric ID first
-		if id, err := strconv.Atoi(filter); err == nil {
-			return id, nil
-		}
-		// Search by name or email
-		row := db.DB().QueryRow(`
-			SELECT CAST(json_extract(data,'$.id') AS INTEGER)
-			FROM resources
-			WHERE resource_type = 'userprofile'
-			  AND (LOWER(json_extract(data,'$.user.email')) = LOWER(?)
-			   OR LOWER(json_extract(data,'$.user.first_name') || ' ' || json_extract(data,'$.user.last_name')) = LOWER(?))
-			LIMIT 1
-		`, filter, filter)
-		var id int
-		if err := row.Scan(&id); err == nil && id > 0 {
-			return id, nil
-		}
-		return 0, fmt.Errorf("user %q not found in local store (run 'sync' first)", filter)
-	}
-
-	// User ID is written to config by sync (from /status/ API call).
-	cfg, err := config.Load("")
-	if err != nil || cfg.SevengeeseUserID == 0 {
-		return 0, fmt.Errorf("could not detect current user — run 'sync' first or pass --user")
-	}
-	return cfg.SevengeeseUserID, nil
+type exporter struct {
+	db          *store.Store
+	sessionUser int
+	since       *time.Time
+	sinceDate   string
+	now         time.Time
+	oldestSync  time.Time
 }
 
-func buildExportProfile(db *store.Store, profileID int, since string) exportProfile {
-	return exportProfile{
-		Profile:      fetchExportUser(db, profileID),
-		Objectives:   fetchExportObjectives(db, profileID, since),
-		Oneonones:    fetchExportOneonones(db, profileID, since),
-		Recognitions: fetchExportRecognition(db, profileID, since),
-		Reviews:      fetchExportReviews(db, profileID, since),
-	}
-}
-
-func fetchDirectReportIDs(db *store.Store, profileID int) []int {
-	managerURI := fmt.Sprintf("/api/v1/userprofile/%d/", profileID)
-	rows, err := db.Query(`
-		SELECT CAST(json_extract(data,'$.id') AS INTEGER)
-		FROM resources
-		WHERE resource_type = 'userprofile'
-		  AND json_extract(data,'$.reports_to') = ?
-		  AND CAST(json_extract(data,'$.id') AS INTEGER) != ?
-	`, managerURI, profileID)
+func buildExport(db *store.Store, userFilter, since string, now time.Time) (*exportOutput, error) {
+	sessionUser, found, err := storedSessionUser(db)
 	if err != nil {
-		return nil
+		return nil, err
+	}
+	if !found {
+		return nil, errors.New("the local database has no synced data; run '7geese-cli sync'")
+	}
+	e := &exporter{db: db, sessionUser: sessionUser, now: now}
+	if since != "" {
+		start, err := time.ParseInLocation(exportDateLayout, since, now.Location())
+		if err != nil {
+			return nil, fmt.Errorf("invalid --since value %q: use the format YYYY-MM-DD", since)
+		}
+		e.since = &start
+		e.sinceDate = since
+	}
+	if err := e.use(sessionDataset(resourceUserProfile)); err != nil {
+		return nil, err
+	}
+
+	target := sessionUser
+	if userFilter != "" {
+		target, err = e.resolveUser(userFilter)
+		if err != nil {
+			return nil, err
+		}
+	}
+	me, err := e.profile(target)
+	if err != nil {
+		return nil, err
+	}
+	out := &exportOutput{Me: *me}
+	if target == sessionUser {
+		reportIDs, err := e.queryIDs(
+			`SELECT id FROM userprofile_view WHERE manager_id = ? AND id <> ? ORDER BY id`, sessionUser, sessionUser)
+		if err != nil {
+			return nil, fmt.Errorf("listing direct reports: %w", err)
+		}
+		for _, reportID := range reportIDs {
+			report, err := e.profile(reportID)
+			if err != nil {
+				return nil, fmt.Errorf("direct report %d: %w", reportID, err)
+			}
+			out.DirectReports = append(out.DirectReports, *report)
+		}
+	}
+	out.ExportedAt = now.UTC().Format(time.RFC3339)
+	out.SyncedAt = e.oldestSync.UTC().Format(time.RFC3339)
+	return out, nil
+}
+
+func (e *exporter) use(key store.DatasetKey) error {
+	syncedAt, synced, err := e.db.DatasetSyncedAt(key)
+	if err != nil {
+		return err
+	}
+	if !synced {
+		return fmt.Errorf("the dataset %s is not synced; run '7geese-cli sync' (sync gets your data and the objectives and reviews of your direct reports)", key)
+	}
+	if e.oldestSync.IsZero() || syncedAt.Before(e.oldestSync) {
+		e.oldestSync = syncedAt
+	}
+	return nil
+}
+
+func (e *exporter) atOrAfterSince(what, timestamp string) (bool, error) {
+	if e.since == nil {
+		return true, nil
+	}
+	instant, err := parseTimestamp(what, timestamp)
+	if err != nil {
+		return false, err
+	}
+	return !instant.Before(*e.since), nil
+}
+
+func (e *exporter) objectiveInRange(node gqlObjectiveNode) (bool, error) {
+	if e.since == nil || !node.Closed {
+		return true, nil
+	}
+	dates := []struct {
+		what  string
+		value *string
+	}{
+		{"due date", node.DueDatetime},
+		{"completion date", node.CompletedDatetime},
+	}
+	dated := false
+	for _, date := range dates {
+		if date.value == nil || *date.value == "" {
+			continue
+		}
+		dated = true
+		keep, err := e.atOrAfterSince(fmt.Sprintf("objective %d %s", node.PK, date.what), *date.value)
+		if err != nil {
+			return false, err
+		}
+		if keep {
+			return true, nil
+		}
+	}
+	if !dated {
+		return false, fmt.Errorf("closed objective %d has no due date and no completion date; --since cannot tell if it is in the period", node.PK)
+	}
+	return false, nil
+}
+
+func (e *exporter) queryIDs(query string, args ...any) ([]int, error) {
+	rows, err := e.db.Query(query, args...)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
 	var ids []int
 	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err == nil && id > 0 {
-			ids = append(ids, id)
+		var id sql.NullInt64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
+		if !id.Valid || id.Int64 <= 0 {
+			return nil, errors.New("a row has no valid id")
+		}
+		ids = append(ids, int(id.Int64))
 	}
-	return ids
+	return ids, rows.Err()
 }
 
-func fetchExportUser(db *store.Store, profileID int) exportUser {
-	row := db.DB().QueryRow(`
-		SELECT
-			CAST(json_extract(data,'$.id') AS INTEGER),
-			json_extract(data,'$.user.first_name') || ' ' || json_extract(data,'$.user.last_name'),
-			COALESCE(json_extract(data,'$.user.email'),''),
-			COALESCE(json_extract(data,'$.position'),''),
-			COALESCE(json_extract(data,'$.hire_date'),'')
-		FROM resources
-		WHERE resource_type = 'userprofile'
-		  AND CAST(json_extract(data,'$.id') AS INTEGER) = ?
-		LIMIT 1
-	`, profileID)
-
-	var u exportUser
-	var fullName string
-	_ = row.Scan(&u.ID, &fullName, &u.Email, &u.Position, &u.HireDate)
-	u.Name = strings.TrimSpace(fullName)
-
-	// Resolve manager name from reports_to URI
-	managerRow := db.DB().QueryRow(`
-		SELECT up.data
-		FROM resources p
-		JOIN resources up ON up.resource_type = 'userprofile'
-		  AND json_extract(p.data,'$.reports_to') = json_extract(up.data,'$.resource_uri')
-		WHERE p.resource_type = 'userprofile'
-		  AND CAST(json_extract(p.data,'$.id') AS INTEGER) = ?
-		LIMIT 1
-	`, profileID)
-	var managerData string
-	if err := managerRow.Scan(&managerData); err == nil {
-		var obj map[string]any
-		if json.Unmarshal([]byte(managerData), &obj) == nil {
-			if u2, ok := obj["user"].(map[string]any); ok {
-				fn, _ := u2["first_name"].(string)
-				ln, _ := u2["last_name"].(string)
-				u.Manager = strings.TrimSpace(fn + " " + ln)
-			}
-		}
-	}
-	return u
-}
-
-func fetchExportObjectives(db *store.Store, profileID int, since string) []exportObjective {
-	resourceType := fmt.Sprintf("user_objectives:%d", profileID)
-	// When since is provided, include objectives whose period intersects [since, now]:
-	//   - open objectives are always included (still active)
-	//   - closed objectives where dueDatetime >= since (ended within or after the window)
-	// When since is empty, all objectives (open + closed) are included.
-	sinceClause := ""
-	var args []any
-	if since != "" {
-		sinceClause = "AND (json_extract(data,'$.closed') = 0 OR json_extract(data,'$.dueDatetime') >= ?)"
-		args = append(args, since)
-	}
-	rows, err := db.Query(`
-		SELECT data FROM resources
-		WHERE resource_type = ?
-		  `+sinceClause+`
-		ORDER BY json_extract(data,'$.closed') ASC, json_extract(data,'$.dueDatetime') DESC
-	`, append([]any{resourceType}, args...)...)
+func (e *exporter) queryData(query string, args ...any) ([]string, error) {
+	rows, err := e.db.Query(query, args...)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
-
-	var objectives []exportObjective
+	var all []string
 	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			continue
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
 		}
+		all = append(all, data)
+	}
+	return all, rows.Err()
+}
+
+func (e *exporter) resolveUser(filter string) (int, error) {
+	if id, err := strconv.Atoi(filter); err == nil {
+		ids, err := e.queryIDs(`SELECT id FROM userprofile_view WHERE id = ?`, id)
+		if err != nil {
+			return 0, fmt.Errorf("finding user %d: %w", id, err)
+		}
+		if len(ids) == 0 {
+			return 0, fmt.Errorf("user %d is not in the synced user profiles", id)
+		}
+		return id, nil
+	}
+	ids, err := e.queryIDs(
+		`SELECT id FROM userprofile_view WHERE lower(email) = lower(?) OR lower(full_name) = lower(?) ORDER BY id`,
+		filter, filter)
+	if err != nil {
+		return 0, fmt.Errorf("finding user %q: %w", filter, err)
+	}
+	if len(ids) == 0 {
+		return 0, fmt.Errorf("user %q is not in the synced user profiles; use the full name, the email or the numeric ID", filter)
+	}
+	if len(ids) > 1 {
+		return 0, fmt.Errorf("%q matches %d users (IDs %v); use the numeric ID", filter, len(ids), ids)
+	}
+	return ids[0], nil
+}
+
+func (e *exporter) profile(profileID int) (*exportProfile, error) {
+	user, err := e.user(profileID)
+	if err != nil {
+		return nil, err
+	}
+	objectives, err := e.objectives(profileID)
+	if err != nil {
+		return nil, err
+	}
+	reviews, err := e.reviews(profileID)
+	if err != nil {
+		return nil, err
+	}
+	profile := &exportProfile{Profile: *user, Objectives: objectives, Reviews: reviews}
+	if profileID != e.sessionUser {
+		return profile, nil
+	}
+
+	meetings, err := e.meetings()
+	if err != nil {
+		return nil, err
+	}
+	recognitions, err := e.recognitions()
+	if err != nil {
+		return nil, err
+	}
+	checkins, err := e.checkins()
+	if err != nil {
+		return nil, err
+	}
+	notifications, err := e.notifications()
+	if err != nil {
+		return nil, err
+	}
+	profile.Oneonones = &meetings
+	profile.Recognitions = recognitions
+	profile.Checkins = &checkins
+	profile.Notifications = &notifications
+	return profile, nil
+}
+
+func (e *exporter) user(profileID int) (*exportUser, error) {
+	var name, email, position, hireDate sql.NullString
+	var managerID sql.NullInt64
+	err := e.db.DB().QueryRow(
+		`SELECT full_name, email, position, hire_date, manager_id FROM userprofile_view WHERE id = ?`, profileID,
+	).Scan(&name, &email, &position, &hireDate, &managerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("user %d is not in the synced user profiles; run '7geese-cli sync'", profileID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading user profile %d: %w", profileID, err)
+	}
+	if name.String == "" {
+		return nil, fmt.Errorf("user profile %d has no name", profileID)
+	}
+	user := &exportUser{
+		ID:       profileID,
+		Name:     name.String,
+		Email:    email.String,
+		Position: position.String,
+		HireDate: hireDate.String,
+	}
+	if !managerID.Valid {
+		return user, nil
+	}
+	user.ManagerID = int(managerID.Int64)
+	var managerName sql.NullString
+	err = e.db.DB().QueryRow(`SELECT full_name FROM userprofile_view WHERE id = ?`, user.ManagerID).Scan(&managerName)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("reading manager profile %d: %w", user.ManagerID, err)
+	}
+	user.Manager = managerName.String
+	return user, nil
+}
+
+func (e *exporter) objectives(ownerID int) ([]exportObjective, error) {
+	if err := e.use(userDataset(resourceUserObjectives, ownerID)); err != nil {
+		return nil, err
+	}
+	rows, err := e.queryData(
+		`SELECT data FROM objective_view WHERE owner_id = ? ORDER BY closed ASC, due_datetime DESC, id ASC`, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("reading objectives of user %d: %w", ownerID, err)
+	}
+	objectives := make([]exportObjective, 0, len(rows))
+	for _, raw := range rows {
 		var node gqlObjectiveNode
 		if err := json.Unmarshal([]byte(raw), &node); err != nil {
+			return nil, fmt.Errorf("decoding a stored objective of user %d: %w", ownerID, err)
+		}
+		keep, err := e.objectiveInRange(node)
+		if err != nil {
+			return nil, err
+		}
+		if !keep {
 			continue
 		}
-		obj := exportObjective{
-			ID:              strconv.Itoa(node.PK),
-			Name:            node.Name,
-			Description:     node.Description,
-			Type:            objectiveTypeName(node.ObjectiveType),
-			ParticipantType: participantTypeName(node.CurrentUserParticipantType),
-			Progress:        node.Progress,
-			StartDate:       node.StartDate,
-			DueDate:         node.DueDatetime,
-			CompletedDate:   node.CompletedDatetime,
-			Closed:          node.Closed,
+		objective, err := exportObjectiveFromNode(node, ownerID == e.sessionUser)
+		if err != nil {
+			return nil, err
 		}
-		for _, kre := range node.KeyResults.Edges {
-			kr := kre.Node
-			obj.KeyResults = append(obj.KeyResults, exportKR{
-				ID:              strconv.Itoa(kr.PK),
-				Name:            kr.Name,
-				Description:     kr.Description,
-				Progress:        kr.Progress,
-				MeasurementType: krMeasurementTypeName(kr.MeasurementType),
-				CurrentValue:    kr.CurrentValue,
-				TargetValue:     kr.TargetValue,
-			})
-		}
-		if node.LastCheckin != nil {
-			obj.Checkins = []exportCheckin{{
-				ID:      strconv.Itoa(node.LastCheckin.PK),
-				Date:    node.LastCheckin.Created,
-				Message: node.LastCheckin.Message,
-			}}
-		}
-		objectives = append(objectives, obj)
+		objectives = append(objectives, *objective)
 	}
-	return objectives
+	return objectives, nil
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func exportObjectiveFromNode(node gqlObjectiveNode, includeRole bool) (*exportObjective, error) {
+	if len(node.Checkins.Edges) != node.Checkins.TotalCount {
+		return nil, fmt.Errorf("objective %d has %d of %d check-ins in the local database; run '7geese-cli sync'", node.PK, len(node.Checkins.Edges), node.Checkins.TotalCount)
+	}
+	objective := &exportObjective{
+		ID:            strconv.Itoa(node.PK),
+		Name:          node.Name,
+		Description:   node.Description,
+		Type:          objectiveTypeName(node.ObjectiveType),
+		Progress:      node.Progress,
+		StartDate:     stringValue(node.StartDate),
+		DueDate:       stringValue(node.DueDatetime),
+		CompletedDate: stringValue(node.CompletedDatetime),
+		Closed:        node.Closed,
+	}
+	if includeRole {
+		objective.ParticipantType = participantTypeName(node.CurrentUserParticipantType)
+	}
+	for _, edge := range node.KeyResults.Edges {
+		kr := edge.Node
+		objective.KeyResults = append(objective.KeyResults, exportKR{
+			ID:              strconv.Itoa(kr.PK),
+			Name:            kr.Name,
+			Description:     kr.Description,
+			Progress:        kr.Progress,
+			MeasurementType: krMeasurementTypeName(kr.MeasurementType),
+			StartingValue:   kr.StartingValue,
+			CurrentValue:    kr.CurrentValue,
+			TargetValue:     kr.TargetValue,
+		})
+	}
+	checkins := make([]gqlObjectiveCheckin, 0, len(node.Checkins.Edges))
+	for _, edge := range node.Checkins.Edges {
+		checkins = append(checkins, edge.Node)
+	}
+	sort.SliceStable(checkins, func(i, j int) bool {
+		if checkins[i].Created != checkins[j].Created {
+			return checkins[i].Created > checkins[j].Created
+		}
+		return checkins[i].PK > checkins[j].PK
+	})
+	for _, checkin := range checkins {
+		progress, err := checkinProgress(checkin.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("check-in %d of objective %d: %w", checkin.PK, node.PK, err)
+		}
+		objective.Checkins = append(objective.Checkins, exportCheckin{
+			ID:               strconv.Itoa(checkin.PK),
+			Date:             checkin.Created,
+			Author:           checkin.User.FullName,
+			Message:          checkin.Message,
+			ProgressSnapshot: progress,
+		})
+	}
+	return objective, nil
+}
+
+func checkinProgress(metadata json.RawMessage) (*float64, error) {
+	if len(metadata) == 0 || string(metadata) == "null" {
+		return nil, nil
+	}
+	var decoded struct {
+		Metadata *struct {
+			Objective *struct {
+				Snapshot *struct {
+					Progress *float64 `json:"progress"`
+				} `json:"snapshot"`
+			} `json:"objective"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(metadata, &decoded); err != nil {
+		return nil, fmt.Errorf("decoding metadata: %w", err)
+	}
+	if decoded.Metadata == nil || decoded.Metadata.Objective == nil || decoded.Metadata.Objective.Snapshot == nil {
+		return nil, nil
+	}
+	return decoded.Metadata.Objective.Snapshot.Progress, nil
 }
 
 func participantTypeName(t int) string {
 	switch t {
+	case 0:
+		return ""
 	case 1:
 		return "owner"
 	case 2:
@@ -450,7 +746,7 @@ func participantTypeName(t int) string {
 	case 3:
 		return "follower"
 	default:
-		return ""
+		return fmt.Sprintf("unknown_%d", t)
 	}
 }
 
@@ -458,14 +754,14 @@ func krMeasurementTypeName(t int) string {
 	switch t {
 	case 1:
 		return "percent"
-	case 2:
-		return "number"
 	case 3:
+		return "number"
+	case 6:
 		return "currency"
-	case 4:
+	case 7:
 		return "boolean"
 	default:
-		return "percent"
+		return fmt.Sprintf("unknown_%d", t)
 	}
 }
 
@@ -478,377 +774,493 @@ func objectiveTypeName(t int) string {
 	case 3:
 		return "org"
 	default:
-		return "personal"
+		return fmt.Sprintf("unknown_%d", t)
 	}
 }
 
-func fetchExportOneonones(db *store.Store, profileID int, since string) []exportMeeting {
-	sinceClause := ""
-	args := []any{profileID, profileID}
-	if since != "" {
-		sinceClause = "AND json_extract(data,'$.start_datetime') >= ?"
-		args = append(args, since)
+func meetingStatusName(status int64, start string, now time.Time) (string, error) {
+	switch status {
+	case oneononeStatusCompleted:
+		return "completed", nil
+	case 0:
+		startTime, err := time.Parse(time.RFC3339, start)
+		if err != nil {
+			return "", fmt.Errorf("start time %q is not an ISO 8601 timestamp", start)
+		}
+		if startTime.After(now) {
+			return "upcoming", nil
+		}
+		return "incomplete", nil
+	default:
+		return fmt.Sprintf("unknown_%d", status), nil
 	}
-	rows, err := db.Query(`
-		SELECT
-			CAST(json_extract(data,'$.id') AS INTEGER),
-			COALESCE(json_extract(data,'$.start_datetime'),''),
-			json_extract(data,'$.creator.user.first_name') || ' ' || json_extract(data,'$.creator.user.last_name'),
-			json_extract(data,'$.target.user.first_name') || ' ' || json_extract(data,'$.target.user.last_name'),
-			json_extract(data,'$.status')
-		FROM resources
-		WHERE resource_type = 'oneonones'
-		  AND (CAST(json_extract(data,'$.creator.id') AS INTEGER) = ?
-		    OR CAST(json_extract(data,'$.target.id') AS INTEGER) = ?)
-		  `+sinceClause+`
-		ORDER BY json_extract(data,'$.start_datetime') DESC
-	`, args...)
+}
+
+func (e *exporter) meetings() ([]exportMeeting, error) {
+	if err := e.use(sessionDataset(resourceOneonones)); err != nil {
+		return nil, err
+	}
+	if err := e.use(sessionDataset(resourceFinalizedOneonones)); err != nil {
+		return nil, err
+	}
+	rows, err := e.db.Query(
+		`SELECT id, start_datetime, status, creator_id, creator_name, target_id, target_name
+		FROM oneonone_view WHERE (creator_id = ? OR target_id = ?)
+		ORDER BY start_datetime DESC, id DESC`, e.sessionUser, e.sessionUser)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("reading 1:1 meetings: %w", err)
 	}
 	defer rows.Close()
 
-	var meetings []exportMeeting
+	type meetingRow struct {
+		id          int
+		start       string
+		status      int64
+		completed   bool
+		with        string
+		statusLabel string
+	}
+	var meetingRows []meetingRow
 	for rows.Next() {
-		var id int
-		var date, creatorName, targetName string
-		var statusRaw any
-		if err := rows.Scan(&id, &date, &creatorName, &targetName, &statusRaw); err != nil {
+		var id, status, creatorID, targetID sql.NullInt64
+		var start, creatorName, targetName sql.NullString
+		if err := rows.Scan(&id, &start, &status, &creatorID, &creatorName, &targetID, &targetName); err != nil {
+			return nil, fmt.Errorf("reading a 1:1 meeting: %w", err)
+		}
+		if !id.Valid || !start.Valid || !status.Valid {
+			return nil, fmt.Errorf("1:1 meeting %d has no id, no start time or no status", id.Int64)
+		}
+		keep, err := e.atOrAfterSince(fmt.Sprintf("1:1 meeting %d start time", id.Int64), start.String)
+		if err != nil {
+			return nil, err
+		}
+		if !keep {
 			continue
 		}
-		status := "upcoming"
-		switch v := statusRaw.(type) {
-		case int64:
-			if v == 1 {
-				status = "completed"
-			}
-		case string:
-			if v == "1" {
-				status = "completed"
-			}
+		with := targetName.String
+		if targetID.Valid && targetID.Int64 == int64(e.sessionUser) {
+			with = creatorName.String
 		}
-
-		// Determine "with" — the other person
-		with := targetName
-		if strings.TrimSpace(targetName) == "" || targetName == " " {
-			with = creatorName
+		if with == "" {
+			return nil, fmt.Errorf("1:1 meeting %d has no name for the other participant", id.Int64)
 		}
-
-		m := exportMeeting{
-			ID:     strconv.Itoa(id),
-			Date:   date,
-			With:   strings.TrimSpace(with),
-			Status: status,
+		label, err := meetingStatusName(status.Int64, start.String, e.now)
+		if err != nil {
+			return nil, fmt.Errorf("1:1 meeting %d: %w", id.Int64, err)
 		}
-
-		// Attach full Q&A from finalized_oneonones
-		raw, _ := db.Get("finalized_oneonones", strconv.Itoa(id))
-		if raw != nil {
-			var gql gqlMeeting
-			if json.Unmarshal(raw, &gql) == nil {
-				for _, qe := range gql.QuestionSet.Questions.Edges {
-					q := qe.Node
-					if q.Content == "" {
-						continue
-					}
-					qa := exportQA{
-						Question: q.Content,
-						Hint:     q.Description,
-					}
-					for _, ne := range q.Notes.Edges {
-						n := ne.Node
-						if strings.TrimSpace(n.Content) == "" {
-							continue
-						}
-						qa.Answers = append(qa.Answers, exportAnswer{
-							Author: n.Creator.FullName,
-							Text:   strings.TrimSpace(n.Content),
-						})
-					}
-					m.Questions = append(m.Questions, qa)
-				}
-			}
-		}
-		meetings = append(meetings, m)
+		meetingRows = append(meetingRows, meetingRow{
+			id:          int(id.Int64),
+			start:       start.String,
+			completed:   status.Int64 == oneononeStatusCompleted,
+			with:        with,
+			statusLabel: label,
+		})
 	}
-	return meetings
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading 1:1 meetings: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("reading 1:1 meetings: %w", err)
+	}
+
+	meetings := make([]exportMeeting, 0, len(meetingRows))
+	for _, row := range meetingRows {
+		meeting := exportMeeting{ID: strconv.Itoa(row.id), Date: row.start, With: row.with, Status: row.statusLabel}
+		if row.completed {
+			raw, found, err := e.db.GetRecord(sessionDataset(resourceFinalizedOneonones), meeting.ID)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, fmt.Errorf("the completed 1:1 meeting %d has no notes in the local database; run '7geese-cli sync'", row.id)
+			}
+			var finalized gqlMeeting
+			if err := json.Unmarshal(raw, &finalized); err != nil {
+				return nil, fmt.Errorf("decoding the stored notes of 1:1 meeting %d: %w", row.id, err)
+			}
+			meeting.Questions, meeting.Comments = exportMeetingNotes(finalized)
+		}
+		meetings = append(meetings, meeting)
+	}
+	return meetings, nil
 }
 
-func fetchExportRecognition(db *store.Store, profileID int, since string) exportRecognition {
-	var rec exportRecognition
-	profileURI := fmt.Sprintf("/api/v1/userprofile/%d/", profileID)
-
-	sentSinceClause := ""
-	sentArgs := []any{profileURI}
-	if since != "" {
-		sentSinceClause = "AND json_extract(data,'$.created') >= ?"
-		sentArgs = append(sentArgs, since)
-	}
-	sentRows, err := db.Query(`
-		SELECT
-			CAST(json_extract(data,'$.id') AS INTEGER),
-			COALESCE(json_extract(data,'$.created'),''),
-			COALESCE(json_extract(data,'$.sender.user.first_name') || ' ' || json_extract(data,'$.sender.user.last_name'),''),
-			COALESCE(json_extract(data,'$.recipient.user.first_name') || ' ' || json_extract(data,'$.recipient.user.last_name'),''),
-			COALESCE(json_extract(data,'$.badge.name'),''),
-			COALESCE(json_extract(data,'$.message'),'')
-		FROM resources
-		WHERE resource_type = 'recognitionbadges'
-		  AND json_extract(data,'$.sender.resource_uri') = ?
-		  `+sentSinceClause+`
-		ORDER BY json_extract(data,'$.created') DESC
-	`, sentArgs...)
-	if err == nil {
-		defer sentRows.Close()
-		for sentRows.Next() {
-			var id int
-			var date, from, to, badge, message string
-			if err := sentRows.Scan(&id, &date, &from, &to, &badge, &message); err != nil {
-				continue
-			}
-			rec.Given = append(rec.Given, exportBadge{
-				ID:      strconv.Itoa(id),
-				Date:    date,
-				From:    strings.TrimSpace(from),
-				To:      strings.TrimSpace(to),
-				Badge:   badge,
-				Message: message,
-			})
-		}
-	}
-
-	recvSinceClause := ""
-	var recvArgs []any
-	if since != "" {
-		recvSinceClause = "AND json_extract(data,'$.published') >= ?"
-		recvArgs = append(recvArgs, since)
-	}
-	recvRows, err := db.Query(`
-		SELECT
-			json_extract(data,'$.id'),
-			COALESCE(json_extract(data,'$.published'),''),
-			COALESCE(json_extract(data,'$.actor.displayName'),''),
-			COALESCE(json_extract(data,'$.target.displayName'),''),
-			COALESCE(json_extract(data,'$.object.badgeName'),''),
-			COALESCE(json_extract(data,'$.object.content'),'')
-		FROM resources
-		WHERE resource_type = 'recognition_received'
-		  `+recvSinceClause+`
-		ORDER BY json_extract(data,'$.published') DESC
-	`, recvArgs...)
-	if err == nil {
-		defer recvRows.Close()
-		for recvRows.Next() {
-			var id, date, from, to, badge, message string
-			if err := recvRows.Scan(&id, &date, &from, &to, &badge, &message); err != nil {
-				continue
-			}
-			rec.Received = append(rec.Received, exportBadge{
-				ID:      id,
-				Date:    date,
-				From:    strings.TrimSpace(from),
-				To:      strings.TrimSpace(to),
-				Badge:   badge,
-				Message: message,
-			})
-		}
-	}
-
-	if rec.Received == nil {
-		rec.Received = []exportBadge{}
-	}
-	if rec.Given == nil {
-		rec.Given = []exportBadge{}
-	}
-	return rec
-}
-
-func fetchExportReviews(db *store.Store, profileID int, since string) []exportReview {
-	resourceType := fmt.Sprintf("user_snapshots:%d", profileID)
-	sinceClause := ""
-	var args []any
-	if since != "" {
-		sinceClause = "AND json_extract(data,'$.endDate') >= ?"
-		args = append(args, since)
-	}
-	rows, err := db.Query(`
-		SELECT data FROM resources
-		WHERE resource_type = ?
-		  `+sinceClause+`
-		ORDER BY json_extract(data,'$.startDate') DESC
-	`, append([]any{resourceType}, args...)...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	var reviews []exportReview
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			continue
-		}
-		var snap gqlSnapshotFull
-		if err := json.Unmarshal([]byte(raw), &snap); err != nil {
-			continue
-		}
-
-		r := exportReview{
-			ID:        snap.PK,
-			Title:     snap.SnapshotGroup.Title,
-			Period:    snapshotPeriod(snap.StartDate),
-			StartDate: snap.StartDate,
-			EndDate:   snap.EndDate,
-			State:     snapshotStateName(snap.WorkflowState),
-			Position:  snap.Position,
-		}
-		if snap.Manager != nil {
-			r.Manager = snap.Manager.FullName
-		}
-
-		// Build item pk -> title map from all sections.
-		itemTitles := map[int]string{}
-		for _, se := range snap.SnapshotGroup.Sections.Edges {
-			for _, ie := range se.Node.Items.Edges {
-				if ie.Node.PK != 0 && ie.Node.Title != "" {
-					itemTitles[ie.Node.PK] = ie.Node.Title
-				}
-			}
-		}
-
-		// Build answer map: item pk -> {employee answer, manager answer}
-		type answerPair struct{ employee, manager string }
-		answers := map[int]*answerPair{}
-		ensurePair := func(pk int) *answerPair {
-			if answers[pk] == nil {
-				answers[pk] = &answerPair{}
-			}
-			return answers[pk]
-		}
-
-		for _, ae := range snap.Answers.Edges {
-			a := ae.Node
-			pk := a.Item.PK
-			if pk == 0 {
-				continue
-			}
-			var text string
-			switch {
-			case a.Answer != "":
-				text = stripHTMLTags(a.Answer)
-			case a.RangeAnswer != nil:
-				text = fmt.Sprintf("%.0f", *a.RangeAnswer)
-			case len(a.Choices.Edges) > 0:
-				var opts []string
-				for _, ce := range a.Choices.Edges {
-					opts = append(opts, ce.Node.Option.Title)
-				}
-				text = strings.Join(opts, ", ")
-			}
+func exportMeetingNotes(meeting gqlMeeting) ([]exportQA, []exportAnswer) {
+	var questions []exportQA
+	for _, edge := range meeting.QuestionSet.Questions.Edges {
+		question := edge.Node
+		qa := exportQA{Question: question.Content, Hint: question.Description, Answers: []exportAnswer{}}
+		for _, noteEdge := range question.Notes.Edges {
+			text := strings.TrimSpace(noteEdge.Node.Content)
 			if text == "" {
 				continue
 			}
-			pair := ensurePair(pk)
-			// The employee/manager distinction: employee is forUser (profileID stored
-			// in the snapshot), manager is the manager profile. We detect by comparing
-			// the responder pk to the manager pk.
-			isManager := snap.Manager != nil && a.Responder.PK != 0
-			// Heuristic: if snapshotGroup has showManagerAnswers and this responder
-			// is not the forUser, it's the manager. We use the manager pk via the
-			// full snapshot's manager field — but we only have fullName not pk here.
-			// Instead: employee answer goes first; if a second answer appears for the
-			// same item from a different responder, it's the manager's.
-			_ = isManager
-			if pair.employee == "" {
-				pair.employee = text
-			} else {
-				pair.manager = text
-			}
+			qa.Answers = append(qa.Answers, exportAnswer{Author: noteEdge.Node.Creator.FullName, Text: text})
 		}
-
-		// Assemble sections preserving section order and only including items with answers.
-		for _, se := range snap.SnapshotGroup.Sections.Edges {
-			sec := se.Node
-			if sec.Title == "" && len(sec.Items.Edges) == 0 {
-				continue
-			}
-			var items []exportReviewQA
-			for _, ie := range sec.Items.Edges {
-				item := ie.Node
-				if item.PK == 0 {
-					continue
-				}
-				pair := answers[item.PK]
-				if pair == nil {
-					continue
-				}
-				items = append(items, exportReviewQA{
-					Question: item.Title,
-					Employee: pair.employee,
-					Manager:  pair.manager,
-				})
-			}
-			if len(items) > 0 {
-				r.Sections = append(r.Sections, exportReviewSection{
-					Title: sec.Title,
-					Items: items,
-				})
-			}
+		if qa.Question == "" && len(qa.Answers) == 0 {
+			continue
 		}
-
-		// Peer feedback curated report.
-		if snap.PeerFeedbackRequest != nil && snap.PeerFeedbackRequest.CuratedReport != nil {
-			cr := snap.PeerFeedbackRequest.CuratedReport
-			peer := &exportPeerReport{
-				Title:     snap.PeerFeedbackRequest.Title,
-				Published: cr.PublishedDatetime,
-			}
-			for _, qe := range cr.SortedCuratedQuestions.Edges {
-				q := qe.Node
-				var questionTitle string
-				// question is a polymorphic union — extract title field.
-				var qMap map[string]any
-				if json.Unmarshal(q.Question, &qMap) == nil {
-					if t, ok := qMap["title"].(string); ok {
-						questionTitle = t
-					}
-				}
-				if questionTitle == "" {
-					continue
-				}
-				pq := exportPeerQuestion{Question: questionTitle}
-				for _, ae := range q.Answers.Edges {
-					if txt := stripHTMLTags(ae.Node.Answer); txt != "" {
-						pq.Answers = append(pq.Answers, txt)
-					}
-				}
-				peer.Questions = append(peer.Questions, pq)
-			}
-			if len(peer.Questions) > 0 {
-				r.PeerFeedback = peer
-			}
-		}
-
-		reviews = append(reviews, r)
+		questions = append(questions, qa)
 	}
-	return reviews
+	var comments []exportAnswer
+	for _, edge := range meeting.Comments.Edges {
+		text := strings.TrimSpace(edge.Node.Content)
+		if text == "" {
+			continue
+		}
+		comments = append(comments, exportAnswer{Author: edge.Node.Creator.FullName, Text: text})
+	}
+	return questions, comments
 }
 
-func snapshotPeriod(startDate string) string {
-	// startDate is like "2026-01-01" or "2026-01-01T00:00:00+00:00"
-	if len(startDate) < 7 {
-		return startDate
+func (e *exporter) badges(view, dateColumn string) ([]exportBadge, error) {
+	rows, err := e.db.Query(fmt.Sprintf(
+		`SELECT id, %s, sender_name, recipient_name, badge, message FROM %s ORDER BY %s DESC, id DESC`,
+		dateColumn, view, dateColumn))
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", view, err)
 	}
-	year := startDate[:4]
-	month := startDate[5:7]
-	switch month {
-	case "01", "02", "03":
-		return "Q1 " + year
-	case "04", "05", "06":
-		return "Q2 " + year
-	case "07", "08", "09":
-		return "Q3 " + year
+	defer rows.Close()
+	badges := []exportBadge{}
+	for rows.Next() {
+		var id, date, from, to, badge, message sql.NullString
+		if err := rows.Scan(&id, &date, &from, &to, &badge, &message); err != nil {
+			return nil, fmt.Errorf("reading %s: %w", view, err)
+		}
+		if id.String == "" || date.String == "" {
+			return nil, fmt.Errorf("a row of %s has no id or no date (id %q)", view, id.String)
+		}
+		keep, err := e.atOrAfterSince(fmt.Sprintf("%s row %s date", view, id.String), date.String)
+		if err != nil {
+			return nil, err
+		}
+		if !keep {
+			continue
+		}
+		badges = append(badges, exportBadge{
+			ID:      id.String,
+			Date:    date.String,
+			From:    from.String,
+			To:      to.String,
+			Badge:   badge.String,
+			Message: message.String,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading %s: %w", view, err)
+	}
+	return badges, nil
+}
+
+func (e *exporter) recognitions() (*exportRecognition, error) {
+	if err := e.use(sessionDataset(resourceRecognitionGiven)); err != nil {
+		return nil, err
+	}
+	if err := e.use(sessionDataset(resourceRecognitionGot)); err != nil {
+		return nil, err
+	}
+	given, err := e.badges("recognition_given_view", "created")
+	if err != nil {
+		return nil, err
+	}
+	received, err := e.badges("recognition_received_view", "published")
+	if err != nil {
+		return nil, err
+	}
+	return &exportRecognition{Received: received, Given: given}, nil
+}
+
+func (e *exporter) checkins() ([]exportUserCheckin, error) {
+	if err := e.use(sessionDataset(resourceCheckins)); err != nil {
+		return nil, err
+	}
+	rows, err := e.db.Query(
+		`SELECT id, created, message, objective_id, objective_name, progress FROM checkin_view ORDER BY created DESC, id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("reading check-ins: %w", err)
+	}
+	defer rows.Close()
+	checkins := []exportUserCheckin{}
+	for rows.Next() {
+		var id, objectiveID sql.NullInt64
+		var created, message, objectiveName sql.NullString
+		var progress sql.NullFloat64
+		if err := rows.Scan(&id, &created, &message, &objectiveID, &objectiveName, &progress); err != nil {
+			return nil, fmt.Errorf("reading a check-in: %w", err)
+		}
+		if !id.Valid || created.String == "" {
+			return nil, fmt.Errorf("check-in %d has no id or no date", id.Int64)
+		}
+		keep, err := e.atOrAfterSince(fmt.Sprintf("check-in %d date", id.Int64), created.String)
+		if err != nil {
+			return nil, err
+		}
+		if !keep {
+			continue
+		}
+		checkin := exportUserCheckin{
+			ID:            strconv.FormatInt(id.Int64, 10),
+			Date:          created.String,
+			Message:       message.String,
+			ObjectiveName: objectiveName.String,
+		}
+		if objectiveID.Valid {
+			checkin.ObjectiveID = strconv.FormatInt(objectiveID.Int64, 10)
+		}
+		if progress.Valid {
+			value := progress.Float64
+			checkin.ProgressSnapshot = &value
+		}
+		checkins = append(checkins, checkin)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading check-ins: %w", err)
+	}
+	return checkins, nil
+}
+
+func (e *exporter) notifications() ([]exportNotification, error) {
+	if err := e.use(sessionDataset(resourceNotifications)); err != nil {
+		return nil, err
+	}
+	rows, err := e.db.Query(
+		`SELECT id, published, verb, actor_name, content FROM notification_view ORDER BY published DESC, id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("reading notifications: %w", err)
+	}
+	defer rows.Close()
+	notifications := []exportNotification{}
+	for rows.Next() {
+		var id, published, verb, actor, content sql.NullString
+		if err := rows.Scan(&id, &published, &verb, &actor, &content); err != nil {
+			return nil, fmt.Errorf("reading a notification: %w", err)
+		}
+		if id.String == "" || published.String == "" {
+			return nil, fmt.Errorf("notification %q has no id or no date", id.String)
+		}
+		keep, err := e.atOrAfterSince(fmt.Sprintf("notification %s date", id.String), published.String)
+		if err != nil {
+			return nil, err
+		}
+		if !keep {
+			continue
+		}
+		notifications = append(notifications, exportNotification{
+			ID:      id.String,
+			Date:    published.String,
+			Verb:    verb.String,
+			Actor:   actor.String,
+			Content: content.String,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading notifications: %w", err)
+	}
+	return notifications, nil
+}
+
+func (e *exporter) reviews(ownerID int) ([]exportReview, error) {
+	if err := e.use(userDataset(resourceUserSnapshots, ownerID)); err != nil {
+		return nil, err
+	}
+	rows, err := e.queryData(
+		`SELECT data FROM review_view WHERE owner_id = ? ORDER BY start_date DESC, id DESC`, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("reading reviews of user %d: %w", ownerID, err)
+	}
+	reviews := make([]exportReview, 0, len(rows))
+	for _, raw := range rows {
+		var snapshot gqlSnapshotFull
+		if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+			return nil, fmt.Errorf("decoding a stored review of user %d: %w", ownerID, err)
+		}
+		if e.since != nil {
+			if _, err := time.Parse(exportDateLayout, snapshot.EndDate); err != nil {
+				return nil, fmt.Errorf("review %d end date %q is not a YYYY-MM-DD date", snapshot.PK, snapshot.EndDate)
+			}
+			if snapshot.EndDate < e.sinceDate {
+				continue
+			}
+		}
+		review, err := exportReviewFromSnapshot(snapshot, ownerID)
+		if err != nil {
+			return nil, err
+		}
+		reviews = append(reviews, *review)
+	}
+	return reviews, nil
+}
+
+var knownReviewAnswerTypes = map[string]bool{
+	"TextItemAnswerNode":        true,
+	"MultiOptionItemAnswerNode": true,
+	"RangeItemAnswerNode":       true,
+}
+
+func reviewAnswerText(answer gqlSnapshotAnswer) string {
+	switch {
+	case answer.Answer != "":
+		return stripHTMLTags(answer.Answer)
+	case answer.RangeAnswer != nil:
+		return strconv.FormatFloat(*answer.RangeAnswer, 'f', -1, 64)
+	case len(answer.Choices.Edges) > 0:
+		options := make([]string, 0, len(answer.Choices.Edges))
+		for _, edge := range answer.Choices.Edges {
+			options = append(options, edge.Node.Option.Title)
+		}
+		return strings.Join(options, ", ")
 	default:
-		return "Q4 " + year
+		return ""
 	}
+}
+
+func appendAnswer(existing, text string) string {
+	if existing == "" {
+		return text
+	}
+	return existing + "\n\n" + text
+}
+
+func exportReviewFromSnapshot(snapshot gqlSnapshotFull, ownerID int) (*exportReview, error) {
+	period, err := reviewPeriod(snapshot.StartDate, snapshot.EndDate)
+	if err != nil {
+		return nil, fmt.Errorf("review %d: %w", snapshot.PK, err)
+	}
+	review := &exportReview{
+		ID:        snapshot.PK,
+		Title:     snapshot.SnapshotGroup.Title,
+		Period:    period,
+		StartDate: snapshot.StartDate,
+		EndDate:   snapshot.EndDate,
+		State:     snapshotStateName(snapshot.WorkflowState),
+		Position:  snapshot.Position,
+	}
+	if snapshot.Manager != nil {
+		review.Manager = snapshot.Manager.FullName
+	}
+
+	sectionItems := map[int]bool{}
+	for _, sectionEdge := range snapshot.SnapshotGroup.Sections.Edges {
+		for _, itemEdge := range sectionEdge.Node.Items.Edges {
+			sectionItems[itemEdge.Node.PK] = true
+		}
+	}
+
+	type answerPair struct{ employee, manager string }
+	answers := map[int]*answerPair{}
+	for _, edge := range snapshot.Answers.Edges {
+		answer := edge.Node
+		text := reviewAnswerText(answer)
+		if text == "" {
+			if !knownReviewAnswerTypes[answer.TypeName] {
+				return nil, fmt.Errorf("review %d has an answer of the type %q that the export cannot read", snapshot.PK, answer.TypeName)
+			}
+			continue
+		}
+		if answer.Item.PK == 0 || !sectionItems[answer.Item.PK] {
+			return nil, fmt.Errorf("review %d has an answer for item %d that is not in a section of the review", snapshot.PK, answer.Item.PK)
+		}
+		if answer.Responder.PK == 0 {
+			return nil, fmt.Errorf("review %d has an answer for item %d with no responder", snapshot.PK, answer.Item.PK)
+		}
+		pair := answers[answer.Item.PK]
+		if pair == nil {
+			pair = &answerPair{}
+			answers[answer.Item.PK] = pair
+		}
+		if answer.Responder.PK == ownerID {
+			pair.employee = appendAnswer(pair.employee, text)
+		} else {
+			pair.manager = appendAnswer(pair.manager, text)
+		}
+	}
+
+	for _, sectionEdge := range snapshot.SnapshotGroup.Sections.Edges {
+		section := sectionEdge.Node
+		var items []exportReviewQA
+		for _, itemEdge := range section.Items.Edges {
+			pair := answers[itemEdge.Node.PK]
+			if pair == nil {
+				continue
+			}
+			items = append(items, exportReviewQA{
+				Question: itemEdge.Node.Title,
+				Employee: pair.employee,
+				Manager:  pair.manager,
+			})
+		}
+		if len(items) > 0 {
+			review.Sections = append(review.Sections, exportReviewSection{Title: section.Title, Items: items})
+		}
+	}
+
+	if snapshot.PeerFeedbackRequest != nil && snapshot.PeerFeedbackRequest.CuratedReport != nil {
+		report := snapshot.PeerFeedbackRequest.CuratedReport
+		peer := &exportPeerReport{
+			Title:     snapshot.PeerFeedbackRequest.Title,
+			Published: report.PublishedDatetime,
+		}
+		for _, questionEdge := range report.SortedCuratedQuestions.Edges {
+			var question struct {
+				Title string `json:"title"`
+			}
+			if len(questionEdge.Node.Question) > 0 {
+				if err := json.Unmarshal(questionEdge.Node.Question, &question); err != nil {
+					return nil, fmt.Errorf("review %d: decoding a peer feedback question: %w", snapshot.PK, err)
+				}
+			}
+			peerQuestion := exportPeerQuestion{Question: question.Title}
+			for _, answerEdge := range questionEdge.Node.Answers.Edges {
+				if text := stripHTMLTags(answerEdge.Node.Answer); text != "" {
+					peerQuestion.Answers = append(peerQuestion.Answers, text)
+				}
+			}
+			if peerQuestion.Question == "" && len(peerQuestion.Answers) == 0 {
+				continue
+			}
+			peer.Questions = append(peer.Questions, peerQuestion)
+		}
+		if len(peer.Questions) > 0 {
+			review.PeerFeedback = peer
+		}
+	}
+	return review, nil
+}
+
+func reviewPeriod(startDate, endDate string) (string, error) {
+	parse := func(name, value string) (time.Time, error) {
+		if len(value) < len(exportDateLayout) {
+			return time.Time{}, fmt.Errorf("%s %q is not a date", name, value)
+		}
+		date, err := time.Parse(exportDateLayout, value[:len(exportDateLayout)])
+		if err != nil {
+			return time.Time{}, fmt.Errorf("%s %q is not a date", name, value)
+		}
+		return date, nil
+	}
+	start, err := parse("start date", startDate)
+	if err != nil {
+		return "", err
+	}
+	end, err := parse("end date", endDate)
+	if err != nil {
+		return "", err
+	}
+	if end.Before(start) {
+		return "", fmt.Errorf("end date %q is before start date %q", endDate, startDate)
+	}
+	if start.Year() != end.Year() {
+		return fmt.Sprintf("%d-%d", start.Year(), end.Year()), nil
+	}
+	startQuarter := (int(start.Month()) + 2) / 3
+	endQuarter := (int(end.Month()) + 2) / 3
+	if startQuarter == endQuarter {
+		return fmt.Sprintf("Q%d %d", startQuarter, start.Year()), nil
+	}
+	startHalf := (startQuarter + 1) / 2
+	endHalf := (endQuarter + 1) / 2
+	if startHalf == endHalf {
+		return fmt.Sprintf("H%d %d", startHalf, start.Year()), nil
+	}
+	return strconv.Itoa(start.Year()), nil
 }

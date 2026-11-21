@@ -371,7 +371,7 @@ func collectCacheReport(ctx context.Context, staleAfterSpec string) map[string]a
 	}
 	report["db_bytes"] = fi.Size()
 
-	s, err := store.OpenWithContext(ctx, dbPath)
+	s, err := store.OpenReadOnly(dbPath)
 	if err != nil {
 		report["status"] = "error"
 		report["error"] = err.Error()
@@ -390,12 +390,10 @@ func collectCacheReport(ctx context.Context, staleAfterSpec string) map[string]a
 		}
 	}
 
-	rows, qerr := s.DB().Query(`SELECT resource_type, COALESCE(total_count, 0), last_synced_at FROM sync_state ORDER BY resource_type`)
+	rows, qerr := s.DB().Query(`SELECT resource_type, owner_id, total_count, last_synced_at FROM sync_state ORDER BY resource_type, owner_id`)
 	if qerr != nil {
-		// sync_state may not exist on a fresh DB that has migrated but not
-		// yet had any sync runs — treat as unknown rather than error.
-		report["status"] = "unknown"
-		report["hint"] = "No sync state recorded; run '7geese-cli sync' to populate."
+		report["status"] = "error"
+		report["error"] = fmt.Sprintf("reading sync state: %v", qerr)
 		return report
 	}
 	defer rows.Close()
@@ -405,13 +403,18 @@ func collectCacheReport(ctx context.Context, staleAfterSpec string) map[string]a
 	haveAny := false
 	oldest := time.Duration(0)
 	for rows.Next() {
-		var rtype string
-		var count int64
+		var key store.DatasetKey
+		var count sql.NullInt64
 		var lastSynced sql.NullTime
-		if err := rows.Scan(&rtype, &count, &lastSynced); err != nil {
-			continue
+		if err := rows.Scan(&key.ResourceType, &key.OwnerID, &count, &lastSynced); err != nil {
+			report["status"] = "error"
+			report["error"] = fmt.Sprintf("reading sync state: %v", err)
+			return report
 		}
-		r := map[string]any{"type": rtype, "rows": count}
+		r := map[string]any{"type": key.String()}
+		if count.Valid {
+			r["rows"] = count.Int64
+		}
 		if lastSynced.Valid {
 			haveAny = true
 			r["last_synced_at"] = lastSynced.Time.UTC().Format(time.RFC3339)
@@ -428,6 +431,11 @@ func collectCacheReport(ctx context.Context, staleAfterSpec string) map[string]a
 			fresh = false
 		}
 		resources = append(resources, r)
+	}
+	if err := rows.Err(); err != nil {
+		report["status"] = "error"
+		report["error"] = fmt.Sprintf("reading sync state: %v", err)
+		return report
 	}
 	report["resources"] = resources
 	report["stale_after"] = staleAfter.String()
@@ -458,6 +466,9 @@ func renderCacheReport(w io.Writer, rep map[string]any) {
 		indicator = yellow("INFO")
 	}
 	fmt.Fprintf(w, "  %s Cache: %s\n", indicator, status)
+	if v, ok := rep["error"]; ok {
+		fmt.Fprintf(w, "    error: %v\n", v)
+	}
 	if v, ok := rep["db_path"]; ok {
 		fmt.Fprintf(w, "    db_path: %v\n", v)
 	}
@@ -478,9 +489,12 @@ func renderCacheReport(w io.Writer, rep map[string]any) {
 			fmt.Fprintf(w, "    resources:\n")
 			for _, r := range resources {
 				rtype, _ := r["type"].(string)
-				rows := r["rows"]
 				staleness, _ := r["staleness"].(string)
-				fmt.Fprintf(w, "      - %s: %v rows, %s\n", rtype, rows, staleness)
+				if rows, ok := r["rows"]; ok {
+					fmt.Fprintf(w, "      - %s: %v rows, %s\n", rtype, rows, staleness)
+				} else {
+					fmt.Fprintf(w, "      - %s: %s\n", rtype, staleness)
+				}
 			}
 		}
 	}

@@ -99,9 +99,6 @@ native streaming instead of polling.`,
 	return cmd
 }
 
-// tailKnownResources returns the resource names this CLI exposes, so the
-// no-arg JSON help envelope can list them without depending on sync's
-// defaultSyncResources (which only exists when sync is generated).
 func tailKnownResources() []string {
 	return []string{
 		"badges",

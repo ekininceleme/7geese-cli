@@ -91,8 +91,9 @@ Commands:
   sync         Pull your data into a local database.
   me export    Export everything (objectives, 1:1s, recognition, reviews) to JSON.
   doctor       Check that auth and connectivity are working.`,
-		SilenceUsage: true,
-		Version:      version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Version:       version,
 	}
 	rootCmd.SetVersionTemplate("7geese-cli {{ .Version }}\n")
 

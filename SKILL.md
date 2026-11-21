@@ -1,356 +1,135 @@
 ---
 name: pp-7geese
-description: "The first CLI for 7Geese — log in with Chrome, query OKRs, check-ins, and 1:1s from the terminal. Trigger phrases: `check my okrs`, `7geese status`, `how are my goals`, `team check-in summary`, `prep for my 1:1`, `use 7geese`, `run 7geese`."
+description: "CLI for 7Geese: log in with the browser session, sync your performance data to a local SQLite database and export objectives, check-ins, 1:1 meetings, reviews and recognition as JSON. Trigger phrases: `check my okrs`, `7geese status`, `how are my goals`, `export my 7geese data`, `prep for my 1:1`, `use 7geese`, `run 7geese`."
 author: "Ekin Inceleme"
 license: "Apache-2.0"
-argument-hint: "<command> [args] | install cli|mcp"
+argument-hint: "<command> [args]"
 allowed-tools: "Read Bash"
 metadata:
   openclaw:
     requires:
       bins:
-        - 7geese-pp-cli
+        - 7geese-cli
 ---
 
-# 7Geese — Printing Press CLI
+# 7Geese CLI
 
-## Prerequisites: Install the CLI
+7Geese has no API tokens. This CLI reads the session of a browser that is logged in to 7Geese, downloads the data of that user to a local SQLite database and exports it as JSON.
 
-This skill drives the `7geese-pp-cli` binary. **You must verify the CLI is installed before invoking any command from this skill.** If it is missing, install it first:
+## Prerequisites
 
-1. Install via the Printing Press installer:
-   ```bash
-   npx -y @mvanhorn/printing-press install 7geese --cli-only
-   ```
-2. Verify: `7geese-pp-cli --version`
-3. Ensure `$GOPATH/bin` (or `$HOME/go/bin`) is on `$PATH`.
-
-If the `npx` install fails before this CLI has a public-library category, install Node or use the category-specific Go fallback after publish.
-
-If `--version` reports "command not found" after install, the install step did not put the binary on `$PATH`. Do not proceed with skill commands until verification succeeds.
-
-7Geese has no API tokens and no CLI. This tool reads your existing browser session via kooky, syncs your org's performance data to a local SQLite store, and makes every OKR, check-in, 1:1, and recognition queryable offline with JSON output.
-
-## When to Use This CLI
-
-Use this CLI when you need to script 7Geese data, build reporting pipelines, prep for 1:1s with a pre-built brief, or give an AI agent context about your team's OKR health and check-in cadence.
-
-## Unique Capabilities
-
-These capabilities aren't available in any other tool for this API.
-
-### Zero-friction auth
-
-- **`auth login --chrome`** — Log in by reading your existing Chrome (or Firefox/Safari) session — no API key needed.
-
-  _Enables zero-credential-management auth for any user already logged into 7Geese in their browser._
-
-  ```bash
-  7geese-pp-cli auth login --chrome
-  ```
-
-### Local state that compounds
-
-- **`okr health`** — See which objectives are on track, at risk, or stale — across personal, team, and org levels.
-
-  _Use before 1:1s or team meetings to quickly identify which OKRs need attention._
-
-  ```bash
-  7geese-pp-cli okr health --json
-  ```
-- **`objectives stale`** — Find objectives that have not been updated in N days.
-
-  _Identify OKRs at risk of being abandoned before performance cycle closes._
-
-  ```bash
-  7geese-pp-cli objectives stale --days 14 --json
-  ```
-- **`checkins streak`** — See consecutive weekly check-in streaks for yourself or your team.
-
-  _Track team engagement habit formation over time._
-
-  ```bash
-  7geese-pp-cli checkins streak --user me --agent
-  ```
-- **`recognize leaderboard`** — See who gives and receives the most recognition this month.
-
-  _Surface recognition patterns for culture reporting and manager coaching._
-
-  ```bash
-  7geese-pp-cli recognize leaderboard --period month --json
-  ```
-
-### Agent-native plumbing
-
-- **`manager dashboard`** — Pre-1:1 brief: direct reports, their recent check-ins, OKR health, and upcoming meetings in one view.
-
-  _Prepare for 1:1s in seconds instead of clicking through multiple 7Geese screens._
-
-  ```bash
-  7geese-pp-cli manager dashboard --json
-  ```
-- **`me week`** — Everything relevant to you this week: check-ins due, OKRs to update, upcoming 1:1s.
-
-  _Morning standup context in one command; useful as an agent briefing tool._
-
-  ```bash
-  7geese-pp-cli me week --agent
-  ```
-
-## Command Reference
-
-**badges** — Available badge types for recognition
-
-- `7geese-pp-cli badges` — 
-
-**categories** — Objective categories for tagging
-
-- `7geese-pp-cli categories` — 
-
-**checkins** — Weekly check-ins on goals and progress
-
-- `7geese-pp-cli checkins create` — 
-- `7geese-pp-cli checkins get` — 
-- `7geese-pp-cli checkins list` — 
-
-**feedbackrequest** — Feedback requests sent to peers
-
-- `7geese-pp-cli feedbackrequest create` — 
-- `7geese-pp-cli feedbackrequest list` — 
-
-**notifications** — User notifications
-
-- `7geese-pp-cli notifications` — 
-
-**objectivekeyresults** — Key results belonging to objectives
-
-- `7geese-pp-cli objectivekeyresults create` — 
-- `7geese-pp-cli objectivekeyresults get` — 
-- `7geese-pp-cli objectivekeyresults list` — 
-- `7geese-pp-cli objectivekeyresults update` — 
-
-**objectives** — Personal OKRs and goals
-
-- `7geese-pp-cli objectives create` — 
-- `7geese-pp-cli objectives delete` — 
-- `7geese-pp-cli objectives get` — 
-- `7geese-pp-cli objectives list` — 
-- `7geese-pp-cli objectives update` — 
-
-**oneononenotes** — Notes attached to one-on-one meetings
-
-- `7geese-pp-cli oneononenotes` — 
-
-**oneonones** — One-on-one meetings between manager and report
-
-- `7geese-pp-cli oneonones get` — 
-- `7geese-pp-cli oneonones list` — 
-
-**organizationalobjectives** — Company-wide OKRs
-
-- `7geese-pp-cli organizationalobjectives get` — 
-- `7geese-pp-cli organizationalobjectives list` — 
-
-**peer_feedback** — Peer feedback requests and responses
-
-- `7geese-pp-cli peer_feedback` — 
-
-**performancecycles** — Performance review cycles
-
-- `7geese-pp-cli performancecycles get` — 
-- `7geese-pp-cli performancecycles list` — 
-
-**recognitionbadges** — Recognition and kudos sent between users
-
-- `7geese-pp-cli recognitionbadges create` — 
-- `7geese-pp-cli recognitionbadges get` — 
-- `7geese-pp-cli recognitionbadges list` — 
-
-**team** — Teams in the organization
-
-- `7geese-pp-cli team get` — 
-- `7geese-pp-cli team list` — 
-
-**teamobjectives** — Team-level OKRs
-
-- `7geese-pp-cli teamobjectives get` — 
-- `7geese-pp-cli teamobjectives list` — 
-
-**user** — Users in the organization
-
-- `7geese-pp-cli user get` — 
-- `7geese-pp-cli user list` — 
-
-**userprofile** — Extended user profile with role and manager info
-
-- `7geese-pp-cli userprofile get` — 
-- `7geese-pp-cli userprofile list` — 
-
-
-### Finding the right command
-
-When you know what you want to do but not which command does it, ask the CLI directly:
+Make sure that the CLI is installed before you use a command from this skill:
 
 ```bash
-7geese-pp-cli which "<capability in your own words>"
+7geese-cli version
 ```
 
-`which` resolves a natural-language capability query to the best matching command from this CLI's curated feature index. Exit code `0` means at least one match; exit code `2` means no confident match — fall back to `--help` or use a narrower query.
+If the command is not found, install the CLI:
+
+```bash
+brew tap ekininceleme/tap
+brew install sevengeese-cli
+```
+
+Pre-built binaries are on the [release page](https://github.com/ekininceleme/7geese-cli/releases/latest).
+
+## Commands
+
+These are all the commands. There are no other commands.
+
+| Command | Function |
+|---------|----------|
+| `7geese-cli auth login` | Read the 7Geese session from Chrome or Firefox (`--chrome`, `--firefox`). |
+| `7geese-cli auth status` | Show the authentication status. |
+| `7geese-cli auth logout` | Remove the stored session. |
+| `7geese-cli sync` | Download all data and replace the local copy. |
+| `7geese-cli me export` | Write one JSON document with all data of the user. |
+| `7geese-cli me week` | Show the check-ins of this week, the objectives to update and the 1:1 meetings of the next 7 days. |
+| `7geese-cli me schema` | Print the JSON Schema of the `me export` output. |
+| `7geese-cli doctor` | Check the authentication, the connection and the age of the local data. |
+| `7geese-cli version` | Print the version. |
+
+### `sync`
+
+Each run is a full refresh. Records that were changed in 7Geese are updated. Records that were deleted in 7Geese are deleted from the local database.
+
+Datasets: user profiles, 1:1 meetings and their notes, objectives with the full check-in history, reviews, recognition (given and received), check-ins, notifications, feedback requests and peer feedback. The objectives and reviews of the direct reports are included.
+
+If a dataset fails, its earlier local data stays and the exit code is not 0. Run the command again.
+
+The output is one JSON event for each dataset on stdout and a final `sync_summary` event. Use `--human-friendly` for text output.
+
+### `me export`
+
+```bash
+7geese-cli me export --yes --output my-data.json
+7geese-cli me export --yes --since 2026-01-01
+7geese-cli me export --yes --user "Name of a direct report"
+7geese-cli me export --yes | jq '.me.objectives'
+```
+
+- `me` has the sections `profile`, `objectives`, `reviews`, `oneonones`, `recognitions`, `checkins` and `notifications`.
+- `direct_reports` has the profile, the objectives and the reviews of each direct report.
+- `synced_at` shows the age of the local data. Run `sync` to refresh the data.
+- `--user` works only for direct reports. The sections `oneonones`, `recognitions`, `checkins` and `notifications` are available only for the session user.
+- `--since` starts the period at 00:00 local time on the given date.
+- If the local data is not complete, the command asks to run `sync`. Use `--yes` to accept without a prompt.
+
+### `me week`
+
+```bash
+7geese-cli me week
+7geese-cli me week --json
+```
+
+The command reads only the local database. Run `sync` first.
+
+## SQL access
+
+The database is at `~/.local/share/7geese-cli/data.db`. Use `--db <path>` to select a different file. One database holds the data of one 7Geese user.
+
+Typed views: `userprofile_view`, `oneonone_view`, `objective_view`, `review_view`, `recognition_given_view`, `recognition_received_view`, `checkin_view`, `notification_view`.
+
+```bash
+sqlite3 ~/.local/share/7geese-cli/data.db "SELECT name, progress FROM objective_view WHERE closed = 0"
+```
 
 ## Recipes
 
-
-### Pre-1:1 brief
-
-```bash
-7geese-pp-cli manager dashboard --agent --select direct_reports.name,direct_reports.okr_health,direct_reports.last_checkin
-```
-
-Get a structured brief for all direct reports before a 1:1 meeting
-
-### Find stale OKRs
+### Status of the open objectives
 
 ```bash
-7geese-pp-cli objectives stale --days 14 --json | jq '.[].name'
+7geese-cli sync && 7geese-cli me export --yes | jq '.me.objectives[] | select(.closed == false) | {name, progress, due_date}'
 ```
 
-List objectives not updated in 2 weeks
-
-### Send kudos
+### Preparation for a 1:1 meeting
 
 ```bash
-7geese-pp-cli recognize send --to user@company.com --badge values --message 'Great work on Q2 launch'
+7geese-cli me week --json
+7geese-cli me export --yes --since 2026-01-01 | jq '.me.oneonones[:3]'
 ```
 
-Send recognition from the terminal
-
-### Check-in history
+### Data of a direct report
 
 ```bash
-7geese-pp-cli checkins list --user me --limit 10 --json
+7geese-cli me export --yes | jq '.direct_reports[] | {name: .profile.name, objectives: [.objectives[].name]}'
 ```
 
-See your last 10 check-ins
+Use `7geese-cli me schema` to see all fields.
 
-### OKR health for agents
+## Authentication
 
-```bash
-7geese-pp-cli okr health --agent --select objectives.name,objectives.progress,objectives.is_overdue
-```
+7Geese uses SSO. The user must be logged in to 7Geese in Chrome or Firefox. `auth login` reads the `sgsession4` cookie from the cookie store of the browser. On macOS, the system asks for access to the login keychain.
 
-Structured OKR health data for AI agent context
+If the session is not valid, `sync` reads a new session from the browser. If that is not possible, it stops before it changes data. Then run `7geese-cli auth login`.
 
-## Auth Setup
+## Errors
 
-7Geese uses Okta SSO — there are no API keys. Run `auth login --chrome` once and the CLI reads your `sgsession4` session cookie directly from Chrome's encrypted cookie store using kooky (CGO + Security.framework on macOS). Works with Chrome, Firefox, and Safari. No credentials to manage.
+The exit code is 0 for success. All other exit codes are failures, and the error text is on stderr. Do not use partial output of a command that failed.
 
-Run `7geese-pp-cli doctor` to verify setup.
-
-## Agent Mode
-
-Add `--agent` to any command. Expands to: `--json --compact --no-input --no-color --yes`.
-
-- **Pipeable** — JSON on stdout, errors on stderr
-- **Filterable** — `--select` keeps a subset of fields. Dotted paths descend into nested structures; arrays traverse element-wise. Critical for keeping context small on verbose APIs:
-
-  ```bash
-  7geese-pp-cli badges --agent --select id,name,status
-  ```
-- **Previewable** — `--dry-run` shows the request without sending
-- **Offline-friendly** — sync/search commands can use the local SQLite store when available
-- **Non-interactive** — never prompts, every input is a flag
-- **Explicit retries** — use `--idempotent` only when an already-existing create should count as success, and `--ignore-missing` only when a missing delete target should count as success
-
-### Response envelope
-
-Commands that read from the local store or the API wrap output in a provenance envelope:
-
-```json
-{
-  "meta": {"source": "live" | "local", "synced_at": "...", "reason": "..."},
-  "results": <data>
-}
-```
-
-Parse `.results` for data and `.meta.source` to know whether it's live or local. A human-readable `N results (live)` summary is printed to stderr only when stdout is a terminal — piped/agent consumers get pure JSON on stdout.
-
-## Agent Feedback
-
-When you (or the agent) notice something off about this CLI, record it:
-
-```
-7geese-pp-cli feedback "the --since flag is inclusive but docs say exclusive"
-7geese-pp-cli feedback --stdin < notes.txt
-7geese-pp-cli feedback list --json --limit 10
-```
-
-Entries are stored locally at `~/.7geese-pp-cli/feedback.jsonl`. They are never POSTed unless `API_7GEESE_FEEDBACK_ENDPOINT` is set AND either `--send` is passed or `API_7GEESE_FEEDBACK_AUTO_SEND=true`. Default behavior is local-only.
-
-Write what *surprised* you, not a bug report. Short, specific, one line: that is the part that compounds.
-
-## Output Delivery
-
-Every command accepts `--deliver <sink>`. The output goes to the named sink in addition to (or instead of) stdout, so agents can route command results without hand-piping. Three sinks are supported:
-
-| Sink | Effect |
-|------|--------|
-| `stdout` | Default; write to stdout only |
-| `file:<path>` | Atomically write output to `<path>` (tmp + rename) |
-| `webhook:<url>` | POST the output body to the URL (`application/json` or `application/x-ndjson` when `--compact`) |
-
-Unknown schemes are refused with a structured error naming the supported set. Webhook failures return non-zero and log the URL + HTTP status on stderr.
-
-## Named Profiles
-
-A profile is a saved set of flag values, reused across invocations. Use it when a scheduled agent calls the same command every run with the same configuration - HeyGen's "Beacon" pattern.
-
-```
-7geese-pp-cli profile save briefing --json
-7geese-pp-cli --profile briefing badges
-7geese-pp-cli profile list --json
-7geese-pp-cli profile show briefing
-7geese-pp-cli profile delete briefing --yes
-```
-
-Explicit flags always win over profile values; profile values win over defaults. `agent-context` lists all available profiles under `available_profiles` so introspecting agents discover them at runtime.
-
-## Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 2 | Usage error (wrong arguments) |
-| 3 | Resource not found |
-| 4 | Authentication required |
-| 5 | API error (upstream issue) |
-| 7 | Rate limited (wait and retry) |
-| 10 | Config error |
-
-## Argument Parsing
+## Argument parsing
 
 Parse `$ARGUMENTS`:
 
-1. **Empty, `help`, or `--help`** → show `7geese-pp-cli --help` output
-2. **Starts with `install`** → ends with `mcp` → MCP installation; otherwise → see Prerequisites above
-3. **Anything else** → Direct Use (execute as CLI command with `--agent`)
-
-## MCP Server Installation
-
-Install the MCP binary from this CLI's published public-library entry or pre-built release, then register it:
-
-```bash
-claude mcp add 7geese-pp-mcp -- 7geese-pp-mcp
-```
-
-Verify: `claude mcp list`
-
-## Direct Use
-
-1. Check if installed: `which 7geese-pp-cli`
-   If not found, offer to install (see Prerequisites at the top of this skill).
-2. Match the user query to the best command from the Unique Capabilities and Command Reference above.
-3. Execute with the `--agent` flag:
-   ```bash
-   7geese-pp-cli <command> [subcommand] [args] --agent
-   ```
-4. If ambiguous, drill into subcommand help: `7geese-pp-cli <command> --help`.
+1. Empty, `help` or `--help`: show the output of `7geese-cli --help`.
+2. All other values: run them as a CLI command. Add `--yes` to `me export` so that the command does not wait for a prompt.

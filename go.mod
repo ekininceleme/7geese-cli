@@ -10,6 +10,7 @@ require (
 	github.com/browserutils/kooky v0.2.9
 	github.com/invopop/jsonschema v0.14.0
 	github.com/mark3labs/mcp-go v0.47.0
+	github.com/mattn/go-isatty v0.0.22
 	github.com/spf13/pflag v1.0.10
 )
 
@@ -24,7 +25,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/keybase/go-keychain v0.0.1 // indirect
-	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect

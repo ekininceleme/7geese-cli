@@ -48,10 +48,28 @@ Reads your `sgsession4` session cookie from your browser's encrypted cookie stor
 
 ### `sync`
 
-Pulls your objectives, 1:1s, recognitions, and reviews into a local SQLite database at `~/.local/share/7geese-cli/data.db`. Re-run any time to pick up new data.
+Downloads your data into a local SQLite database at `~/.local/share/7geese-cli/data.db`.
 
 ```bash
 7geese-cli sync
+7geese-cli sync --human-friendly   # text output instead of JSON events
+```
+
+Each run is a full refresh:
+
+- Records that changed in 7Geese are updated.
+- Records that were deleted in 7Geese are deleted from the local database.
+- If one dataset fails, its earlier local data stays, the command names the dataset and the exit code is not 0. Run `sync` again.
+- If the session is not valid, `sync` reads a new session from your browser. If that is not possible, it stops before it changes data.
+
+Datasets: user profiles, 1:1 meetings and their notes, objectives with the full check-in history, reviews, recognition (given and received), check-ins, notifications, feedback requests and peer feedback. The objectives and reviews of your direct reports are included.
+
+A database holds the data of one 7Geese user. If you log in as a different user, use `--db` with a different path.
+
+Typed SQL views are available for your own queries: `userprofile_view`, `oneonone_view`, `objective_view`, `review_view`, `recognition_given_view`, `recognition_received_view`, `checkin_view`, `notification_view`.
+
+```bash
+sqlite3 ~/.local/share/7geese-cli/data.db "SELECT name, progress FROM objective_view WHERE closed = 0"
 ```
 
 ### `me export`
@@ -60,13 +78,16 @@ Exports all your performance data to a single JSON file.
 
 ```bash
 7geese-cli me export > my-data.json
-7geese-cli me export | jq '.objectives'
+7geese-cli me export | jq '.me.objectives'
 
 # Only include data from 2025 onwards
 7geese-cli me export --since 2025-01-01 > 2025-data.json
+
+# Export a direct report (name, email or numeric ID)
+7geese-cli me export --user 123456
 ```
 
-If you haven't run `auth login` or `sync` yet, `me export` will prompt you to do both automatically. In a non-interactive context (CI, script, piped output) the prompts are skipped and the command fails with a clear error — pass `--yes` to auto-confirm instead:
+`me export` reads only the local database. If the local data is not complete, `me export` asks to run `auth login` and `sync`. In a non-interactive context (CI, script) there is no prompt and the command fails with a clear error. Pass `--yes` to confirm automatically:
 
 ```bash
 7geese-cli me export --yes > my-data.json
@@ -74,10 +95,28 @@ If you haven't run `auth login` or `sync` yet, `me export` will prompt you to do
 
 The JSON output contains:
 
-- **objectives** — OKRs where you are an owner or stakeholder, with key results, progress, and last check-in
-- **oneonones** — Your 1:1 meeting history with questions and answers from both participants
-- **recognitions** — Recognition badges you sent or received
-- **reviews** — Completed performance review snapshots with your answers and your manager's responses, including peer feedback
+- **synced_at** — Time of the oldest sync of the exported data. Run `sync` to refresh the data.
+- **me.profile** — Name, email, position, hire date and manager
+- **me.objectives** — OKRs where you are an owner, a stakeholder or a follower, with key results and the full check-in history
+- **me.reviews** — Performance reviews in all workflow states, with your answers, the answers of your manager and peer feedback
+- **me.oneonones** — Your 1:1 meetings with the questions, the answers of the two participants and the comments
+- **me.recognitions** — Recognition badges that you received and gave
+- **me.checkins** — Check-ins that you posted
+- **me.notifications** — Your notification feed
+- **direct_reports** — Profile, objectives and reviews of each direct report
+
+7Geese gives 1:1 meetings, recognition, check-ins and notifications only for the logged-in user. Thus an export with `--user` contains the profile, the objectives and the reviews only, and it is available only for your direct reports.
+
+A value that 7Geese does not document is exported as `unknown_<n>` (for example an objective type or a meeting status).
+
+### `me week`
+
+Shows the check-ins that you posted this week, your open objectives with no check-in this week, and the 1:1 meetings in the next 7 days. It reads only the local database.
+
+```bash
+7geese-cli me week
+7geese-cli me week --json
+```
 
 ### `me schema`
 
@@ -85,7 +124,7 @@ Prints the JSON Schema for the output of `me export`. Useful for tooling and int
 
 ```bash
 7geese-cli me schema
-7geese-cli me schema | jq '.properties.objectives'
+7geese-cli me schema | jq '.["$defs"].exportObjective'
 ```
 
 The schema is also committed to the repo at [`schema/export.json`](schema/export.json).
@@ -102,16 +141,18 @@ Checks that authentication and connectivity are working.
 
 | Flag | Description |
 |------|-------------|
-| `--since <date>` | Only include data on or after this date (format: `YYYY-MM-DD`). For objectives: always includes open ones; for closed ones, filters by due date. |
+| `--since <date>` | `me export`: include only data on or after this date (format: `YYYY-MM-DD`). The period starts at 00:00 local time on this date. 1:1 meetings, recognitions, check-ins and notifications are compared by their timestamp. Reviews are included when the review period ends on or after this date. Open objectives are always included. Closed objectives are included when the due date or the completion date is on or after this date. |
+| `--user <name, email or ID>` | `me export`: export a direct report. |
+| `--db <path>` | Use a different database file. |
 | `--yes` | Auto-confirm all prompts (auth login, sync). Useful for scripts and automation. |
 | `--no-input` | Disable all prompts and fail immediately if auth or data is missing. |
 | `--config <path>` | Use a custom config file path |
 
 ## Authentication details
 
-7Geese uses Okta SSO — there are no API tokens. `auth login` reads your `sgsession4` cookie from Chrome or Firefox's local encrypted store using [sweetcookie](https://github.com/steipete/sweetcookie). Your session stays local; nothing is sent anywhere except back to 7Geese.
+7Geese uses Okta SSO — there are no API tokens. `auth login` reads your `sgsession4` cookie from Chrome or Firefox's local encrypted store using [kooky](https://github.com/browserutils/kooky). Your session stays local; nothing is sent anywhere except back to 7Geese.
 
-If your session expires, just run `auth login` again.
+If your session expires, `sync` reads a new session from your browser. If that fails, run `auth login` again.
 
 Config is stored at `~/.config/7geese-cli/config.json`.
 
@@ -136,6 +177,8 @@ To get the cookie value: open Chrome or Firefox, log into app.7geese.com, open D
 
 **Windows: `auth login` fails to decrypt cookies** — Newer Chromium versions on Windows use app-bound encryption that may not be supported. Try using Firefox instead (`7geese-cli auth login --firefox`).
 
-**401 errors after sync** — Session expired. Run `7geese-cli auth login` again.
+**`sync` says that the session is not valid** — Log into app.7geese.com in Chrome or Firefox, then run `7geese-cli auth login` and `7geese-cli sync` again.
 
-**Empty objectives after sync** — Run `7geese-cli doctor` to confirm auth is working. The sync fetches objectives where you are an owner or stakeholder; if you have none in 7Geese, the export will be empty.
+**`sync` says that the database holds the data of a different user** — Use `--db` with a different path, or delete the database file.
+
+**Empty objectives after sync** — Run `7geese-cli doctor` to confirm auth is working. The sync gets objectives where you are an owner, a stakeholder or a follower. If you have none in 7Geese, the list is empty.

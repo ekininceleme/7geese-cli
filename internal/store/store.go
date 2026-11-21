@@ -34,7 +34,9 @@ func IsUUID(s string) bool {
 // shape — adding columns, dropping indexes, changing FTS5 tokenizers —
 // so an older binary refuses to open a newer database rather than silently
 // producing wrong results against a schema it cannot read.
-const StoreSchemaVersion = 2
+const StoreSchemaVersion = 3
+
+const SessionOwner = 0
 
 type Store struct {
 	db *sql.DB
@@ -71,6 +73,15 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("opening database (read-only): %w", err)
 	}
 	db.SetMaxOpenConns(2)
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("reading schema version of %s: %w", dbPath, err)
+	}
+	if version != StoreSchemaVersion {
+		db.Close()
+		return nil, fmt.Errorf("database %s has schema version %d, this CLI needs version %d; run '7geese-cli sync' to migrate it", dbPath, version, StoreSchemaVersion)
+	}
 	return &Store{db: db, path: dbPath}, nil
 }
 
@@ -237,43 +248,6 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("database schema version %d is newer than supported version %d; upgrade the CLI binary or open an older database", current, StoreSchemaVersion)
 	}
 
-	migrations := []string{
-		`CREATE TABLE IF NOT EXISTS resources (
-			id TEXT PRIMARY KEY,
-			resource_type TEXT NOT NULL,
-			data JSON NOT NULL,
-			synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_resources_type ON resources(resource_type)`,
-		`CREATE INDEX IF NOT EXISTS idx_resources_synced ON resources(synced_at)`,
-		`CREATE TABLE IF NOT EXISTS sync_state (
-			resource_type TEXT PRIMARY KEY,
-			last_cursor TEXT,
-			last_synced_at DATETIME,
-			total_count INTEGER DEFAULT 0
-		)`,
-		`CREATE VIRTUAL TABLE IF NOT EXISTS resources_fts USING fts5(
-			id, resource_type, content, tokenize='porter unicode61'
-		)`,
-		// Migration: change PRIMARY KEY from id alone to (resource_type, id)
-		// so multiple users can store records with the same id under different
-		// resource_types without collision. Idempotent: skipped if already done.
-		`CREATE TABLE IF NOT EXISTS resources_v2 (
-			id TEXT NOT NULL,
-			resource_type TEXT NOT NULL,
-			data JSON NOT NULL,
-			synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (resource_type, id)
-		)`,
-		`INSERT OR IGNORE INTO resources_v2 SELECT id, resource_type, data, synced_at, updated_at FROM resources`,
-		`DROP TABLE IF EXISTS resources`,
-		`ALTER TABLE resources_v2 RENAME TO resources`,
-		`CREATE INDEX IF NOT EXISTS idx_resources_type ON resources(resource_type)`,
-		`CREATE INDEX IF NOT EXISTS idx_resources_synced ON resources(synced_at)`,
-	}
-
 	// Run every migration — including the column backfill and the
 	// schema-version stamp — inside a single BEGIN IMMEDIATE transaction
 	// pinned to one connection. IMMEDIATE acquires SQLite's RESERVED lock
@@ -302,10 +276,8 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err := s.backfillColumns(ctx, conn); err != nil {
 			return fmt.Errorf("backfilling columns: %w", err)
 		}
-		for _, m := range migrations {
-			if _, err := conn.ExecContext(ctx, m); err != nil {
-				return fmt.Errorf("migration failed: %w", err)
-			}
+		if err := applySchema(ctx, conn); err != nil {
+			return fmt.Errorf("migration failed: %w", err)
 		}
 		// Stamp the schema version. On a fresh DB this writes 1; on an
 		// already-stamped DB this is a no-op write of the same value.
@@ -426,33 +398,32 @@ func isSQLiteBusy(err error) bool {
 		strings.Contains(msg, "database table is locked")
 }
 
-func (s *Store) upsertGenericResourceTx(tx *sql.Tx, resourceType, id string, data json.RawMessage) error {
-	_, err := tx.Exec(
-		`INSERT INTO resources (id, resource_type, data, synced_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(resource_type, id) DO UPDATE SET data = excluded.data, synced_at = excluded.synced_at, updated_at = excluded.updated_at`,
-		id, resourceType, string(data), time.Now(), time.Now(),
-	)
-	if err != nil {
+func upsertResourceTx(tx *sql.Tx, key DatasetKey, id string, data json.RawMessage) error {
+	now := time.Now().UTC()
+	if _, err := tx.Exec(
+		`INSERT INTO resources (resource_type, owner_id, id, data, synced_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(resource_type, owner_id, id) DO UPDATE SET data = excluded.data, synced_at = excluded.synced_at, updated_at = excluded.updated_at`,
+		key.ResourceType, key.OwnerID, id, string(data), now, now,
+	); err != nil {
 		return err
 	}
-
-	ftsRowid := ftsRowID(id)
-	// Use explicit rowid for FTS5 compatibility with modernc.org/sqlite.
-	// Standard DELETE WHERE column=? may not work on FTS5 virtual tables.
-	if _, err = tx.Exec(`DELETE FROM resources_fts WHERE rowid = ?`, ftsRowid); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: FTS index cleanup failed: %v\n", err)
+	var rowID int64
+	if err := tx.QueryRow(
+		`SELECT row_id FROM resources WHERE resource_type = ? AND owner_id = ? AND id = ?`,
+		key.ResourceType, key.OwnerID, id,
+	).Scan(&rowID); err != nil {
+		return fmt.Errorf("reading row id of %s/%s: %w", key.ResourceType, id, err)
 	}
-
-	if _, err = tx.Exec(
-		`INSERT INTO resources_fts (rowid, id, resource_type, content)
-		 VALUES (?, ?, ?, ?)`,
-		ftsRowid, id, resourceType, string(data),
+	if _, err := tx.Exec(`DELETE FROM resources_fts WHERE rowid = ?`, rowID); err != nil {
+		return fmt.Errorf("removing search index entry of %s/%s: %w", key.ResourceType, id, err)
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO resources_fts (rowid, id, resource_type, content) VALUES (?, ?, ?, ?)`,
+		rowID, id, key.ResourceType, string(data),
 	); err != nil {
-		// FTS insert failure is non-fatal
-		fmt.Fprintf(os.Stderr, "warning: FTS index update failed: %v\n", err)
+		return fmt.Errorf("writing search index entry of %s/%s: %w", key.ResourceType, id, err)
 	}
-
 	return nil
 }
 
@@ -465,7 +436,7 @@ func (s *Store) Upsert(resourceType, id string, data json.RawMessage) error {
 	}
 	defer tx.Rollback()
 
-	if err := s.upsertGenericResourceTx(tx, resourceType, id, data); err != nil {
+	if err := upsertResourceTx(tx, DatasetKey{ResourceType: resourceType, OwnerID: SessionOwner}, id, data); err != nil {
 		return err
 	}
 
@@ -475,8 +446,8 @@ func (s *Store) Upsert(resourceType, id string, data json.RawMessage) error {
 func (s *Store) Get(resourceType, id string) (json.RawMessage, error) {
 	var data string
 	err := s.db.QueryRow(
-		`SELECT data FROM resources WHERE resource_type = ? AND id = ?`,
-		resourceType, id,
+		`SELECT data FROM resources WHERE resource_type = ? AND owner_id = ? AND id = ?`,
+		resourceType, SessionOwner, id,
 	).Scan(&data)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -517,7 +488,7 @@ func (s *Store) Search(query string, limit int) ([]json.RawMessage, error) {
 	}
 	rows, err := s.db.Query(
 		`SELECT r.data FROM resources r
-		 JOIN resources_fts f ON r.id = f.id
+		 JOIN resources_fts f ON r.row_id = f.rowid
 		 WHERE resources_fts MATCH ?
 		 ORDER BY rank
 		 LIMIT ?`,
@@ -546,17 +517,6 @@ func extractObjectID(obj map[string]any) string {
 		}
 	}
 	return ""
-}
-
-// ftsRowID derives a deterministic rowid from a string ID for use with FTS5.
-// modernc.org/sqlite's FTS5 implementation may not support DELETE WHERE column=?
-// on virtual tables, so we use explicit rowids and DELETE WHERE rowid=? instead.
-func ftsRowID(id string) int64 {
-	var h uint64
-	for _, c := range id {
-		h = h*31 + uint64(c)
-	}
-	return int64(h & 0x7FFFFFFFFFFFFFFF) // ensure positive
 }
 
 // LookupFieldValue resolves a field value from a JSON object map, trying
@@ -675,7 +635,7 @@ func (s *Store) UpsertBatch(resourceType string, items []json.RawMessage) (int, 
 			continue
 		}
 
-		if err := s.upsertGenericResourceTx(tx, resourceType, id, item); err != nil {
+		if err := upsertResourceTx(tx, DatasetKey{ResourceType: resourceType, OwnerID: SessionOwner}, id, item); err != nil {
 			return 0, extractFailures, fmt.Errorf("upserting %s/%s: %w", resourceType, id, err)
 		}
 
@@ -700,19 +660,19 @@ func (s *Store) SaveSyncState(resourceType, cursor string, count int) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	_, err := s.db.Exec(
-		`INSERT INTO sync_state (resource_type, last_cursor, last_synced_at, total_count)
-		 VALUES (?, ?, ?, ?)
-		 ON CONFLICT(resource_type) DO UPDATE SET last_cursor = excluded.last_cursor,
+		`INSERT INTO sync_state (resource_type, owner_id, last_cursor, last_synced_at, total_count)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(resource_type, owner_id) DO UPDATE SET last_cursor = excluded.last_cursor,
 		 last_synced_at = excluded.last_synced_at, total_count = excluded.total_count`,
-		resourceType, cursor, time.Now(), count,
+		resourceType, SessionOwner, cursor, time.Now().UTC(), count,
 	)
 	return err
 }
 
 func (s *Store) GetSyncState(resourceType string) (cursor string, lastSynced time.Time, count int, err error) {
 	err = s.db.QueryRow(
-		`SELECT last_cursor, last_synced_at, total_count FROM sync_state WHERE resource_type = ?`,
-		resourceType,
+		`SELECT COALESCE(last_cursor, ''), last_synced_at, total_count FROM sync_state WHERE resource_type = ? AND owner_id = ?`,
+		resourceType, SessionOwner,
 	).Scan(&cursor, &lastSynced, &count)
 	if err == sql.ErrNoRows {
 		return "", time.Time{}, 0, nil
@@ -725,10 +685,10 @@ func (s *Store) SaveSyncCursor(resourceType, cursor string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	_, err := s.db.Exec(
-		`INSERT INTO sync_state (resource_type, last_cursor, last_synced_at, total_count)
-		 VALUES (?, ?, CURRENT_TIMESTAMP, 0)
-		 ON CONFLICT(resource_type) DO UPDATE SET last_cursor = ?, last_synced_at = CURRENT_TIMESTAMP`,
-		resourceType, cursor, cursor,
+		`INSERT INTO sync_state (resource_type, owner_id, last_cursor, last_synced_at, total_count)
+		 VALUES (?, ?, ?, CURRENT_TIMESTAMP, 0)
+		 ON CONFLICT(resource_type, owner_id) DO UPDATE SET last_cursor = ?, last_synced_at = CURRENT_TIMESTAMP`,
+		resourceType, SessionOwner, cursor, cursor,
 	)
 	return err
 }
@@ -736,7 +696,7 @@ func (s *Store) SaveSyncCursor(resourceType, cursor string) error {
 // GetSyncCursor returns the last pagination cursor for a resource type.
 func (s *Store) GetSyncCursor(resourceType string) string {
 	var cursor sql.NullString
-	s.db.QueryRow("SELECT last_cursor FROM sync_state WHERE resource_type = ?", resourceType).Scan(&cursor)
+	s.db.QueryRow("SELECT last_cursor FROM sync_state WHERE resource_type = ? AND owner_id = ?", resourceType, SessionOwner).Scan(&cursor)
 	if cursor.Valid {
 		return cursor.String
 	}
@@ -772,7 +732,7 @@ func (s *Store) ListIDs(resourceType string) ([]string, error) {
 // GetLastSyncedAt returns the last sync timestamp for a resource type.
 func (s *Store) GetLastSyncedAt(resourceType string) string {
 	var ts sql.NullString
-	s.db.QueryRow("SELECT last_synced_at FROM sync_state WHERE resource_type = ?", resourceType).Scan(&ts)
+	s.db.QueryRow("SELECT last_synced_at FROM sync_state WHERE resource_type = ? AND owner_id = ?", resourceType, SessionOwner).Scan(&ts)
 	if ts.Valid {
 		return ts.String
 	}

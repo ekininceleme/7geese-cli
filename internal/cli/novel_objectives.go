@@ -3,184 +3,26 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
-	"os"
+	"sort"
 	"strconv"
-	"time"
 
-	"7geese-cli/internal/config"
 	"7geese-cli/internal/store"
 )
 
-var syncHTTPClient = &http.Client{Timeout: 30 * time.Second}
+const (
+	objectivePageSize        = 50
+	objectiveCheckinPageSize = 100
+	objectiveChildPageSize   = 200
+)
 
-// fetchCurrentUserID calls /status/ and returns the authenticated user's
-// profile ID. This is the canonical whoami for session-cookie auth — one
-// lightweight GET, no variables required.
-func fetchCurrentUserID(flags *rootFlags) (int, error) {
-	cfg, err := config.Load(flags.configPath)
-	if err != nil || cfg.SevengeeseSession == "" {
-		return 0, fmt.Errorf("no auth configured")
-	}
-	req, err := http.NewRequest("GET", cfg.BaseURL+"/status/", nil)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Cookie", "sgsession4="+cfg.SevengeeseSession+"; sgcsrftoken4="+cfg.SevengeeseCSRF)
-	resp, err := syncHTTPClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	var status struct {
-		LoggedIn bool `json:"loggedIn"`
-		UserID   int  `json:"userId"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return 0, err
-	}
-	if !status.LoggedIn || status.UserID == 0 {
-		return 0, fmt.Errorf("session not logged in")
-	}
-	return status.UserID, nil
+var objectiveFilters = []string{"ownerOrStakeholder", "follower"}
+
+type gqlPageInfo struct {
+	EndCursor   string `json:"endCursor"`
+	HasNextPage bool   `json:"hasNextPage"`
 }
-
-// syncUserRecognition fetches all recognition badges sent or received by the
-// current user via two filtered REST calls and stores them in the local store.
-// This replaces the unfiltered company-wide recognitionbadges sync.
-func syncUserRecognition(flags *rootFlags, db *store.Store, profileID int) (int, error) {
-	cfg, err := config.Load(flags.configPath)
-	if err != nil || cfg.SevengeeseSession == "" {
-		return 0, fmt.Errorf("no auth configured")
-	}
-
-	type restPage struct {
-		Objects []json.RawMessage `json:"objects"`
-		Meta    struct {
-			TotalCount int    `json:"total_count"`
-			Next       string `json:"next"`
-		} `json:"meta"`
-	}
-
-	profileIDStr := strconv.Itoa(profileID)
-	fetchPage := func(filter string, offset int) (*restPage, error) {
-		q := url.Values{}
-		q.Set(filter, profileIDStr)
-		q.Set("limit", "100")
-		q.Set("offset", strconv.Itoa(offset))
-		u := cfg.BaseURL + "/api/v1/recognitionbadges/?" + q.Encode()
-		req, err := http.NewRequest("GET", u, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Cookie", "sgsession4="+cfg.SevengeeseSession+"; sgcsrftoken4="+cfg.SevengeeseCSRF)
-		resp, err := syncHTTPClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		var page restPage
-		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
-			return nil, err
-		}
-		return &page, nil
-	}
-
-	// Sent badges: recognitionbadges?sender=<id> (numeric ID, not URI).
-	// recipient=<id> returns 25k+ company-wide records so we skip it here.
-	synced := 0
-	offset := 0
-	for {
-		page, err := fetchPage("sender", offset)
-		if err != nil {
-			return synced, fmt.Errorf("fetching recognitionbadges: %w", err)
-		}
-		for _, item := range page.Objects {
-			var obj struct {
-				ID int `json:"id"`
-			}
-			if err := json.Unmarshal(item, &obj); err != nil || obj.ID == 0 {
-				continue
-			}
-			_ = db.Upsert("recognitionbadges", strconv.Itoa(obj.ID), item)
-			synced++
-		}
-		if len(page.Objects) < 100 {
-			break
-		}
-		offset += 100
-	}
-
-	// Received badges: feeds/recognition?recipient=<profileURI> uses timestamp cursors.
-	profileURI := fmt.Sprintf("/api/v1/userprofile/%d/", profileID)
-	rSynced, rErr := syncReceivedRecognition(flags, cfg, db, profileURI)
-	synced += rSynced
-	if rErr != nil {
-		return synced, rErr
-	}
-
-	return synced, nil
-}
-
-func syncReceivedRecognition(flags *rootFlags, cfg *config.Config, db *store.Store, profileURI string) (int, error) {
-	type feedMeta struct {
-		Limit  int    `json:"limit"`
-		Offset string `json:"offset"`
-	}
-	type feedPage struct {
-		Objects []json.RawMessage `json:"objects"`
-		Meta    feedMeta          `json:"meta"`
-	}
-
-	synced := 0
-	offsetParam := ""
-	const limit = 100
-	for {
-		q := url.Values{}
-		q.Set("recipient", profileURI)
-		q.Set("limit", strconv.Itoa(limit))
-		if offsetParam != "" && offsetParam != "None" {
-			q.Set("offset", offsetParam)
-		}
-		u := cfg.BaseURL + "/api/v1/feeds/recognition/?" + q.Encode()
-		req, err := http.NewRequest("GET", u, nil)
-		if err != nil {
-			return synced, err
-		}
-		req.Header.Set("Cookie", "sgsession4="+cfg.SevengeeseSession+"; sgcsrftoken4="+cfg.SevengeeseCSRF)
-		resp, err := syncHTTPClient.Do(req)
-		if err != nil {
-			return synced, fmt.Errorf("fetching feeds/recognition: %w", err)
-		}
-		var page feedPage
-		err = json.NewDecoder(resp.Body).Decode(&page)
-		resp.Body.Close()
-		if err != nil {
-			return synced, fmt.Errorf("decoding feeds/recognition: %w", err)
-		}
-		for _, item := range page.Objects {
-			var obj struct {
-				ID string `json:"id"`
-			}
-			if err := json.Unmarshal(item, &obj); err != nil || obj.ID == "" {
-				continue
-			}
-			_ = db.Upsert("recognition_received", obj.ID, item)
-			synced++
-		}
-		if len(page.Objects) < limit || page.Meta.Offset == "None" || page.Meta.Offset == "" || page.Meta.Offset == offsetParam {
-			break
-		}
-		offsetParam = page.Meta.Offset
-	}
-	return synced, nil
-}
-
-// --- GraphQL types for getUserContextObjectives ---
 
 type gqlObjectiveUser struct {
 	PK       int    `json:"pk"`
@@ -200,10 +42,21 @@ type gqlObjectiveKR struct {
 }
 
 type gqlObjectiveCheckin struct {
-	PK      int              `json:"pk"`
-	Message string           `json:"message"`
-	Created string           `json:"created"`
-	User    gqlObjectiveUser `json:"user"`
+	PK       int              `json:"pk"`
+	Message  string           `json:"message"`
+	Created  string           `json:"created"`
+	Metadata json.RawMessage  `json:"metadata,omitempty"`
+	User     gqlObjectiveUser `json:"user"`
+}
+
+type gqlObjectiveCheckinEdge struct {
+	Node gqlObjectiveCheckin `json:"node"`
+}
+
+type gqlObjectiveCheckins struct {
+	TotalCount int                       `json:"totalCount"`
+	PageInfo   *gqlPageInfo              `json:"pageInfo,omitempty"`
+	Edges      []gqlObjectiveCheckinEdge `json:"edges"`
 }
 
 type gqlObjectiveNode struct {
@@ -214,317 +67,220 @@ type gqlObjectiveNode struct {
 	Draft                      bool    `json:"draft"`
 	Private                    bool    `json:"private"`
 	Progress                   float64 `json:"progress"`
-	DueDatetime                string  `json:"dueDatetime"`
-	StartDate                  string  `json:"startDate"`
-	CompletedDatetime          string  `json:"completedDatetime"`
+	DueDatetime                *string `json:"dueDatetime"`
+	StartDate                  *string `json:"startDate"`
+	CompletedDatetime          *string `json:"completedDatetime"`
 	ObjectiveType              int     `json:"objectiveType"`
 	CurrentUserParticipantType int     `json:"currentUserParticipantType"`
 	Owners                     struct {
-		Edges []struct {
+		PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+		Edges    []struct {
 			Node gqlObjectiveUser `json:"node"`
 		} `json:"edges"`
 	} `json:"owners"`
 	KeyResults struct {
-		Edges []struct {
+		PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+		Edges    []struct {
 			Node gqlObjectiveKR `json:"node"`
 		} `json:"edges"`
 	} `json:"keyResults"`
 	LastCheckin *gqlObjectiveCheckin `json:"lastCheckin"`
-	Checkins    struct {
-		TotalCount int `json:"totalCount"`
-	} `json:"checkins"`
+	Checkins    gqlObjectiveCheckins `json:"checkins"`
 }
 
 type gqlObjectivePage struct {
-	TotalCount int `json:"totalCount"`
-	PageInfo   struct {
-		EndCursor   string `json:"endCursor"`
-		HasNextPage bool   `json:"hasNextPage"`
-	} `json:"pageInfo"`
-	Edges []struct {
+	TotalCount int         `json:"totalCount"`
+	PageInfo   gqlPageInfo `json:"pageInfo"`
+	Edges      []struct {
 		Node gqlObjectiveNode `json:"node"`
 	} `json:"edges"`
 }
 
-func fetchContextObjectivesPage(flags *rootFlags, cfg *config.Config, filter string, profileID int, after string) (*gqlObjectivePage, error) {
-	variables := map[string]any{
-		"userId": profileID,
-		"first":  100,
-		"after":  after,
-	}
+const objectiveCheckinFields = `totalCount
+          pageInfo { endCursor hasNextPage }
+          edges { node { pk message created metadata user { pk fullName } } }`
 
-	// Build the query dynamically with the correct filter arg
-	query := fmt.Sprintf(`
-query getUserContextObjectives($userId: Int!, $first: Int!, $after: String) {
-  objectives(first: $first, after: $after, %s: $userId, orderBy: "closed,-due_datetime") {
+func objectivesQuery(filter string) string {
+	return fmt.Sprintf(`
+query getUserContextObjectives($userId: Int!, $first: Int!, $after: String, $children: Int!, $checkins: Int!) {
+  objectives(first: $first, after: $after, %s: $userId, orderBy: "closed,-due_datetime,pk") {
     totalCount
-    pageInfo { endCursor hasNextPage __typename }
+    pageInfo { endCursor hasNextPage }
     edges {
       node {
         pk name description closed draft private progress
         dueDatetime startDate completedDatetime objectiveType currentUserParticipantType
-        owners(first: 50) {
-          edges { node { pk fullName position __typename } __typename }
-          __typename
+        owners(first: $children) {
+          pageInfo { endCursor hasNextPage }
+          edges { node { pk fullName position } }
         }
-        keyResults(first: 50) {
-          edges {
-            node {
-              id: pk name description progress currentValue targetValue startingValue measurementType
-              __typename
-            }
-            __typename
-          }
-          __typename
+        keyResults(first: $children) {
+          pageInfo { endCursor hasNextPage }
+          edges { node { id: pk name description progress currentValue targetValue startingValue measurementType } }
         }
-        checkins { totalCount __typename }
-        lastCheckin {
-          pk message created
-          user { pk fullName __typename }
-          __typename
+        checkins(first: $checkins) {
+          %s
         }
-        __typename
+        lastCheckin { pk message created user { pk fullName } }
       }
-      __typename
     }
-    __typename
   }
-}`, filter)
-
-	body, _ := json.Marshal(map[string]any{
-		"operationName": "getUserContextObjectives",
-		"variables":     variables,
-		"query":         query,
-	})
-
-	req, err := http.NewRequest("POST", cfg.BaseURL+"/graphql?opname=getUserContextObjectives", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	referer := cfg.BaseURL + "/objectives/"
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Cookie", "sgsession4="+cfg.SevengeeseSession+"; sgcsrftoken4="+cfg.SevengeeseCSRF)
-	req.Header.Set("X-CSRFToken", cfg.SevengeeseCSRF)
-	req.Header.Set("Referer", referer)
-	req.Header.Set("X-HREF", referer)
-	req.Header.Set("Origin", cfg.BaseURL)
-
-	resp, err := syncHTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var envelope struct {
-		Data struct {
-			Objectives gqlObjectivePage `json:"objectives"`
-		} `json:"data"`
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return nil, err
-	}
-	if len(envelope.Errors) > 0 {
-		return nil, fmt.Errorf("GraphQL error: %s", envelope.Errors[0].Message)
-	}
-	return &envelope.Data.Objectives, nil
+}`, filter, objectiveCheckinFields)
 }
 
-// syncCurrentUserProfile fetches the current user's profile and their manager's
-// profile via direct GETs — no company-wide userprofile list needed.
-func syncCurrentUserProfile(flags *rootFlags, db *store.Store, profileID int) error {
-	cfg, err := config.Load(flags.configPath)
-	if err != nil || cfg.SevengeeseSession == "" {
-		return fmt.Errorf("no auth configured")
-	}
+var objectiveCheckinsQuery = fmt.Sprintf(`
+query getObjectiveCheckins($pk: Int!, $first: Int!, $after: String) {
+  objective(pk: $pk) {
+    pk
+    checkins(first: $first, after: $after) {
+          %s
+    }
+  }
+}`, objectiveCheckinFields)
 
-	fetchProfile := func(id int) (json.RawMessage, error) {
-		u := cfg.BaseURL + fmt.Sprintf("/api/v1/userprofile/%d/", id)
-		req, err := http.NewRequest("GET", u, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Cookie", "sgsession4="+cfg.SevengeeseSession+"; sgcsrftoken4="+cfg.SevengeeseCSRF)
-		resp, err := syncHTTPClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		var raw json.RawMessage
-		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-			return nil, err
-		}
-		return raw, nil
+func fetchObjectivesPage(api *syncAPI, filter string, profileID int, after string) (*gqlObjectivePage, error) {
+	var data struct {
+		Objectives *gqlObjectivePage `json:"objectives"`
 	}
-
-	// Fetch our own profile
-	ownRaw, err := fetchProfile(profileID)
+	err := api.graphQL("getUserContextObjectives", "/objectives/", objectivesQuery(filter), map[string]any{
+		"userId":   profileID,
+		"first":    objectivePageSize,
+		"after":    after,
+		"children": objectiveChildPageSize,
+		"checkins": objectiveCheckinPageSize,
+	}, &data)
 	if err != nil {
-		return fmt.Errorf("fetching own profile: %w", err)
+		return nil, err
 	}
-	if err := db.Upsert("userprofile", strconv.Itoa(profileID), ownRaw); err != nil {
-		return err
+	if data.Objectives == nil {
+		return nil, fmt.Errorf("GraphQL getUserContextObjectives returned no objectives list for user %d", profileID)
 	}
+	return data.Objectives, nil
+}
 
-	// Fetch manager's profile so name lookups work
-	var profile struct {
-		ReportsTo string `json:"reports_to"`
+func fetchObjectiveCheckinsPage(api *syncAPI, objectiveID int, after string) (*gqlObjectiveCheckins, error) {
+	var data struct {
+		Objective *struct {
+			Checkins gqlObjectiveCheckins `json:"checkins"`
+		} `json:"objective"`
 	}
-	if json.Unmarshal(ownRaw, &profile) == nil && profile.ReportsTo != "" {
-		var managerID int
-		fmt.Sscanf(profile.ReportsTo, "/api/v1/userprofile/%d/", &managerID)
-		if managerID > 0 {
-			managerRaw, err := fetchProfile(managerID)
-			if err == nil {
-				_ = db.Upsert("userprofile", strconv.Itoa(managerID), managerRaw)
-			}
-		}
+	err := api.graphQL("getObjectiveCheckins", "/objectives/", objectiveCheckinsQuery, map[string]any{
+		"pk":    objectiveID,
+		"first": objectiveCheckinPageSize,
+		"after": after,
+	}, &data)
+	if err != nil {
+		return nil, err
 	}
+	if data.Objective == nil {
+		return nil, fmt.Errorf("objective %d is not visible; its check-in history cannot be read", objectiveID)
+	}
+	return &data.Objective.Checkins, nil
+}
 
-	// Fetch direct reports' profiles so export can resolve them by user ID.
-	// Non-fatal: if this fails, sync still succeeds and direct_reports will be empty.
-	managerURI := fmt.Sprintf("/api/v1/userprofile/%d/", profileID)
-	offset := 0
-	const pageSize = 100
-	for {
-		reportsURL := cfg.BaseURL + fmt.Sprintf("/api/v1/userprofile/?reports_to=%s&limit=%d&offset=%d", managerURI, pageSize, offset)
-		req, err := http.NewRequest("GET", reportsURL, nil)
+func completeObjective(api *syncAPI, node *gqlObjectiveNode) error {
+	if node.PK == 0 {
+		return fmt.Errorf("objective %q has no pk", node.Name)
+	}
+	if node.Owners.PageInfo == nil || node.KeyResults.PageInfo == nil || node.Checkins.PageInfo == nil {
+		return fmt.Errorf("objective %d has no page information for its owners, key results or check-ins", node.PK)
+	}
+	if node.Owners.PageInfo.HasNextPage {
+		return fmt.Errorf("objective %d has more than %d owners", node.PK, objectiveChildPageSize)
+	}
+	if node.KeyResults.PageInfo.HasNextPage {
+		return fmt.Errorf("objective %d has more than %d key results", node.PK, objectiveChildPageSize)
+	}
+	node.Owners.PageInfo = nil
+	node.KeyResults.PageInfo = nil
+
+	pageInfo := *node.Checkins.PageInfo
+	for pageInfo.HasNextPage {
+		if pageInfo.EndCursor == "" {
+			return fmt.Errorf("objective %d check-in history has a next page but no cursor", node.PK)
+		}
+		cursor := pageInfo.EndCursor
+		page, err := fetchObjectiveCheckinsPage(api, node.PK, cursor)
 		if err != nil {
-			break
+			return fmt.Errorf("check-in history of objective %d: %w", node.PK, err)
 		}
-		req.Header.Set("Cookie", "sgsession4="+cfg.SevengeeseSession+"; sgcsrftoken4="+cfg.SevengeeseCSRF)
-		resp, err := syncHTTPClient.Do(req)
-		if err != nil {
-			break
+		if page.PageInfo == nil {
+			return fmt.Errorf("objective %d check-in page has no page information", node.PK)
 		}
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			break
+		if len(page.Edges) == 0 {
+			return fmt.Errorf("objective %d check-in history returned an empty page", node.PK)
 		}
-		var page struct {
-			Objects []json.RawMessage `json:"objects"`
-			Meta    struct {
-				Next string `json:"next"`
-			} `json:"meta"`
+		node.Checkins.Edges = append(node.Checkins.Edges, page.Edges...)
+		node.Checkins.TotalCount = page.TotalCount
+		if len(node.Checkins.Edges) > page.TotalCount {
+			return fmt.Errorf("objective %d returned more than its %d check-ins; the check-in history does not advance", node.PK, page.TotalCount)
 		}
-		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
-		resp.Body.Close()
-		if decodeErr != nil {
-			break
+		if page.PageInfo.HasNextPage && page.PageInfo.EndCursor == cursor {
+			return fmt.Errorf("objective %d check-in history does not advance after cursor %q", node.PK, cursor)
 		}
-		for _, raw := range page.Objects {
-			var p struct {
-				ID int `json:"id"`
-			}
-			if json.Unmarshal(raw, &p) == nil && p.ID > 0 {
-				_ = db.Upsert("userprofile", strconv.Itoa(p.ID), raw)
-			}
+		pageInfo = *page.PageInfo
+	}
+	node.Checkins.PageInfo = nil
+
+	seen := make(map[int]bool, len(node.Checkins.Edges))
+	for _, edge := range node.Checkins.Edges {
+		if edge.Node.PK == 0 {
+			return fmt.Errorf("objective %d has a check-in with no pk", node.PK)
 		}
-		if page.Meta.Next == "" || len(page.Objects) < pageSize {
-			break
+		if seen[edge.Node.PK] {
+			return fmt.Errorf("objective %d returned check-in %d two times", node.PK, edge.Node.PK)
 		}
-		offset += pageSize
+		seen[edge.Node.PK] = true
+	}
+	if len(node.Checkins.Edges) != node.Checkins.TotalCount {
+		return fmt.Errorf("objective %d returned %d of %d check-ins", node.PK, len(node.Checkins.Edges), node.Checkins.TotalCount)
 	}
 	return nil
 }
 
-// normalizeGQLObjective converts a GraphQL objective node into a map with
-// REST-compatible field names so that the objectives resource_type in the
-// local store has a consistent shape for MCP tools, okr health, and me week.
-//
-// Field mapping:
-//
-//	pk            → id
-//	dueDatetime   → due_date
-//	objectiveType → objective_type
-//	lastCheckin.created → updated_at (best-available proxy; empty when no check-in)
-func normalizeGQLObjective(node gqlObjectiveNode) map[string]any {
-	m := map[string]any{
-		"id":             node.PK,
-		"name":           node.Name,
-		"description":    node.Description,
-		"progress":       node.Progress,
-		"closed":         node.Closed,
-		"due_date":       node.DueDatetime,
-		"start_date":     node.StartDate,
-		"objective_type": node.ObjectiveType,
-	}
-	if node.LastCheckin != nil {
-		m["updated_at"] = node.LastCheckin.Created
-	}
-	return m
-}
-
-// storeObjective writes a GraphQL objective node into two resource types:
-//   - user_objectives:<profileID>  (raw GraphQL shape, for sync tracking)
-//   - objectives                   (normalized REST-compatible shape, for MCP tools)
-//
-// Always upserts — no skip-existing guard — so progress and check-in updates
-// are reflected on every sync.
-func storeObjective(db *store.Store, profileID int, node gqlObjectiveNode) error {
-	id := fmt.Sprintf("%d", node.PK)
-
-	// Raw GraphQL record under the user-scoped bucket.
-	raw, err := json.Marshal(node)
-	if err != nil {
-		return fmt.Errorf("marshaling user_objectives record: %w", err)
-	}
-	userRT := fmt.Sprintf("user_objectives:%d", profileID)
-	if err := db.Upsert(userRT, id, json.RawMessage(raw)); err != nil {
-		return fmt.Errorf("upserting user_objectives: %w", err)
-	}
-
-	// Normalized record under objectives so all read paths see it.
-	normalized, err := json.Marshal(normalizeGQLObjective(node))
-	if err != nil {
-		return fmt.Errorf("marshaling normalized objectives record: %w", err)
-	}
-	if err := db.Upsert("objectives", id, json.RawMessage(normalized)); err != nil {
-		return fmt.Errorf("upserting objectives: %w", err)
-	}
-
-	return nil
-}
-
-// syncUserObjectives fetches all objectives where profileID is an owner,
-// stakeholder, or follower via two GraphQL calls (ownerOrStakeholder + follower),
-// deduplicates by pk, and stores each one via storeObjective — which writes to
-// both user_objectives:<profileID> and objectives so MCP tools can read them.
-func syncUserObjectives(flags *rootFlags, db *store.Store, profileID int) (int, error) {
-	cfg, err := config.Load(flags.configPath)
-	if err != nil || cfg.SevengeeseSession == "" {
-		return 0, fmt.Errorf("no auth configured")
-	}
-
-	// Collect all unique objectives keyed by pk across both filter calls.
+func fetchUserObjectives(api *syncAPI, profileID int) ([]store.Record, error) {
 	all := map[int]gqlObjectiveNode{}
-
-	for _, filter := range []string{"ownerOrStakeholder", "follower"} {
+	for _, filter := range objectiveFilters {
 		after := ""
+		fetched := map[int]bool{}
 		for {
-			page, err := fetchContextObjectivesPage(flags, cfg, filter, profileID, after)
+			page, err := fetchObjectivesPage(api, filter, profileID, after)
 			if err != nil {
-				return 0, fmt.Errorf("fetching objectives (%s): %w", filter, err)
+				return nil, fmt.Errorf("objectives (%s): %w", filter, err)
 			}
-			for _, edge := range page.Edges {
-				all[edge.Node.PK] = edge.Node
+			for i := range page.Edges {
+				node := page.Edges[i].Node
+				if err := completeObjective(api, &node); err != nil {
+					return nil, fmt.Errorf("objectives (%s): %w", filter, err)
+				}
+				fetched[node.PK] = true
+				all[node.PK] = node
 			}
 			if !page.PageInfo.HasNextPage {
+				if len(fetched) != page.TotalCount {
+					return nil, fmt.Errorf("objectives (%s): received %d of %d objectives; the list changed during the sync, run it again", filter, len(fetched), page.TotalCount)
+				}
 				break
+			}
+			if len(page.Edges) == 0 || page.PageInfo.EndCursor == "" || page.PageInfo.EndCursor == after {
+				return nil, fmt.Errorf("objectives (%s): the list does not advance after cursor %q", filter, after)
 			}
 			after = page.PageInfo.EndCursor
 		}
 	}
 
-	synced := 0
-	for _, node := range all {
-		if err := storeObjective(db, profileID, node); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to store objective %d: %v\n", node.PK, err)
-			continue
-		}
-		synced++
+	ids := make([]int, 0, len(all))
+	for id := range all {
+		ids = append(ids, id)
 	}
-	return synced, nil
+	sort.Ints(ids)
+	records := make([]store.Record, 0, len(ids))
+	for _, id := range ids {
+		data, err := json.Marshal(all[id])
+		if err != nil {
+			return nil, fmt.Errorf("encoding objective %d: %w", id, err)
+		}
+		records = append(records, store.Record{ID: strconv.Itoa(id), Data: data})
+	}
+	return records, nil
 }
