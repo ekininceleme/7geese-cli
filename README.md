@@ -62,11 +62,13 @@ Each run is a full refresh:
 - If one dataset fails, its earlier local data stays, the command names the dataset and the exit code is not 0. Run `sync` again.
 - If the session is not valid, `sync` reads a new session from your browser. If that is not possible, it stops before it changes data.
 
-Datasets: user profiles, 1:1 meetings and their notes, objectives with the full check-in history, reviews, recognition (given and received), check-ins, notifications, feedback requests and peer feedback. The objectives and reviews of your direct reports are included.
+Datasets: user profiles, 1:1 meetings and their notes, objectives with the full check-in history, reviews, the feedback requests about you with their responses, recognition (given and received), check-ins and notifications. The objectives and reviews of your direct reports are included.
+
+The feedback requests are those where you are the recipient and those that are attached to your reviews. If 7Geese reports more submitted responses than it returns, the dataset fails and does not store an incomplete result.
 
 A database holds the data of one 7Geese user. If you log in as a different user, use `--db` with a different path.
 
-Typed SQL views are available for your own queries: `userprofile_view`, `oneonone_view`, `objective_view`, `review_view`, `recognition_given_view`, `recognition_received_view`, `checkin_view`, `notification_view`.
+Typed SQL views are available for your own queries: `userprofile_view`, `oneonone_view`, `objective_view`, `review_view`, `recognition_given_view`, `recognition_received_view`, `checkin_view`, `notification_view`, `feedback_request_view`, `feedback_answer_view`.
 
 ```bash
 sqlite3 ~/.local/share/7geese-cli/data.db "SELECT name, progress FROM objective_view WHERE closed = 0"
@@ -98,14 +100,15 @@ The JSON output contains:
 - **synced_at** — Time of the oldest sync of the exported data. Run `sync` to refresh the data.
 - **me.profile** — Name, email, position, hire date and manager
 - **me.objectives** — OKRs where you are an owner, a stakeholder or a follower, with key results and the full check-in history
-- **me.reviews** — Performance reviews in all workflow states, with your answers, the answers of your manager and peer feedback
+- **me.reviews** — Performance reviews in all workflow states, with your answers, the answers of your manager, the curated peer feedback report and the IDs of the attached feedback requests
+- **me.feedback** — Feedback requests about you, with the responses, the answers and the comments
 - **me.oneonones** — Your 1:1 meetings with the questions, the answers of the two participants and the comments
 - **me.recognitions** — Recognition badges that you received and gave
 - **me.checkins** — Check-ins that you posted
 - **me.notifications** — Your notification feed
 - **direct_reports** — Profile, objectives and reviews of each direct report
 
-7Geese gives 1:1 meetings, recognition, check-ins and notifications only for the logged-in user. Thus an export with `--user` contains the profile, the objectives and the reviews only, and it is available only for your direct reports.
+The feedback, 1:1 meetings, recognition, check-ins and notifications are available only for the logged-in user. Thus an export with `--user` contains the profile, the objectives and the reviews only, and it is available only for your direct reports.
 
 A value that 7Geese does not document is exported as `unknown_<n>` (for example an objective type or a meeting status).
 
@@ -141,7 +144,7 @@ Checks that authentication and connectivity are working.
 
 | Flag | Description |
 |------|-------------|
-| `--since <date>` | `me export`: include only data on or after this date (format: `YYYY-MM-DD`). The period starts at 00:00 local time on this date. 1:1 meetings, recognitions, check-ins and notifications are compared by their timestamp. Reviews are included when the review period ends on or after this date. Open objectives are always included. Closed objectives are included when the due date or the completion date is on or after this date. |
+| `--since <date>` | `me export`: include only data on or after this date (format: `YYYY-MM-DD`). The period starts at 00:00 local time on this date. 1:1 meetings, recognitions, check-ins and notifications are compared by their timestamp. Reviews are included when the review period ends on or after this date. A feedback request is included when it was sent on or after this date, when a response was submitted on or after this date, or when it is attached to a review in the export. Open objectives are always included. Closed objectives are included when the due date or the completion date is on or after this date. |
 | `--user <name, email or ID>` | `me export`: export a direct report. |
 | `--db <path>` | Use a different database file. |
 | `--yes` | Auto-confirm all prompts (auth login, sync). Useful for scripts and automation. |

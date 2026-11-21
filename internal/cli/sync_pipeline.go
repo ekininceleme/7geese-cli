@@ -25,8 +25,7 @@ const (
 	resourceOneonones          = "oneonones"
 	resourceFinalizedOneonones = "finalized_oneonones"
 	resourceOneononeNotes      = "oneononenotes"
-	resourceFeedbackRequest    = "feedbackrequest"
-	resourcePeerFeedback       = "peer_feedback"
+	resourceFeedbackRequests   = "feedback_requests"
 	resourcePerformanceCycles  = "performancecycles"
 	resourceRecognitionGiven   = "recognitionbadges"
 	resourceRecognitionGot     = "recognition_received"
@@ -391,11 +390,29 @@ func (r *syncRun) syncUser(profileID int) {
 	}()
 	go func() {
 		defer wg.Done()
-		r.dataset(userDataset(resourceUserSnapshots, profileID), func() ([]store.Record, error) {
-			return fetchUserSnapshots(r.api, profileID)
+		var reviewRequestIDs []int
+		reviewsSynced := r.dataset(userDataset(resourceUserSnapshots, profileID), func() ([]store.Record, error) {
+			records, linked, err := fetchUserSnapshots(r.api, profileID)
+			reviewRequestIDs = linked
+			return records, err
 		})
+		if profileID == r.profileID {
+			r.syncFeedback(reviewRequestIDs, reviewsSynced)
+		}
 	}()
 	wg.Wait()
+}
+
+func (r *syncRun) syncFeedback(reviewRequestIDs []int, reviewsSynced bool) {
+	key := sessionDataset(resourceFeedbackRequests)
+	if !reviewsSynced {
+		r.reporter.Start(key)
+		r.fail(key, fmt.Errorf("not synced because %s failed", resourceUserSnapshots), 0)
+		return
+	}
+	r.dataset(key, func() ([]store.Record, error) {
+		return fetchFeedbackRequests(r.api, r.profileID, reviewRequestIDs)
+	})
 }
 
 func (r *syncRun) syncRosterAndReports() {
@@ -466,8 +483,6 @@ func (r *syncRun) execute() {
 		r.syncMeetings,
 		func() { r.syncUser(r.profileID) },
 		func() { r.list(resourceOneononeNotes, "/api/v1/oneononenotes/", nil) },
-		func() { r.list(resourceFeedbackRequest, "/api/v1/feedbackrequest/", nil) },
-		func() { r.list(resourcePeerFeedback, "/api/v1/feedback/", nil) },
 		func() {
 			r.list(resourcePerformanceCycles, "/api/v1/performancecycles/", url.Values{"target": {self}})
 		},

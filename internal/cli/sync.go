@@ -22,9 +22,9 @@ Each run is a full refresh. Records that were changed in 7Geese are updated.
 Records that were deleted in 7Geese are deleted from the local database.
 
 Datasets: user profiles, 1:1 meetings and their notes, objectives with the
-full check-in history, reviews, recognition (given and received), check-ins,
-notifications, feedback requests and peer feedback. The objectives and reviews
-of your direct reports are included.
+full check-in history, reviews, the feedback requests about you with their
+responses, recognition (given and received), check-ins and notifications. The
+objectives and reviews of your direct reports are included.
 
 If a dataset fails, its earlier local data stays and the exit code is not 0.
 Run the command again to complete the sync.

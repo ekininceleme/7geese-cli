@@ -57,6 +57,135 @@ type fakeReview struct {
 	Data  map[string]any
 }
 
+type fakeFeedbackAnswer struct {
+	TypeName string
+	Question string
+	Hint     string
+	Text     string
+	Number   int
+	Options  []string
+}
+
+type fakeFeedbackResponse struct {
+	PK        int
+	From      string
+	Submitted string
+	Comment   string
+	Answers   []fakeFeedbackAnswer
+}
+
+type fakeFeedbackRequest struct {
+	PK         int
+	Recipient  int
+	Title      string
+	Status     string
+	Created    string
+	Asked      []string
+	Submitted  int
+	CanViewAll bool
+	Listed     bool
+	Responses  []fakeFeedbackResponse
+}
+
+type fakeFeedbackEntry struct {
+	Listed    bool
+	Recipient int
+	Data      map[string]any
+}
+
+func fakeClosedPage(edges []any) map[string]any {
+	return map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "edges": edges}
+}
+
+func fakeFeedback(request fakeFeedbackRequest) fakeFeedbackEntry {
+	responders := []any{}
+	for i, name := range request.Asked {
+		responders = append(responders, map[string]any{"node": map[string]any{
+			"pk": request.PK*10 + i, "state": 2, "profile": fakeGQLUser(i+1, name),
+		}})
+	}
+	feedbacks := []any{}
+	for _, response := range request.Responses {
+		answers := []any{}
+		for i, answer := range response.Answers {
+			question := map[string]any{
+				"__typename": "TextQuestionNode", "pk": i + 1, "type": "text",
+				"title": answer.Question, "description": answer.Hint, "ordinal": i,
+			}
+			node := map[string]any{
+				"__typename": answer.TypeName, "pk": response.PK*10 + i,
+				"question": question, "comments": fakeClosedPage([]any{}),
+			}
+			switch answer.TypeName {
+			case "RangeAnswerNode":
+				node["number"] = answer.Number
+				question["__typename"] = "RangeQuestionNode"
+				question["start"], question["startText"] = 1, "Poor"
+				question["end"], question["endText"] = 5, "Great"
+			case "MultiOptionAnswerNode":
+				choices := []any{}
+				for _, option := range answer.Options {
+					choices = append(choices, map[string]any{"node": map[string]any{"option": map[string]any{"title": option}}})
+				}
+				node["choices"] = fakeClosedPage(choices)
+			default:
+				node["text"] = answer.Text
+			}
+			answers = append(answers, map[string]any{"node": node})
+		}
+		responder := map[string]any{"profile": nil}
+		if response.From != "" {
+			responder["profile"] = fakeGQLUser(1, response.From)
+		}
+		var submitted any
+		if response.Submitted != "" {
+			submitted = response.Submitted
+		}
+		comments := []any{}
+		if response.Comment != "" {
+			comments = append(comments, map[string]any{"node": map[string]any{
+				"pk": response.PK*10 + 9, "created": "2026-05-22T09:00:00+00:00",
+				"comment": response.Comment, "creator": fakeGQLUser(fakeMe, "Alex Morgan"),
+			}})
+		}
+		feedbacks = append(feedbacks, map[string]any{"node": map[string]any{
+			"pk": response.PK, "state": 2, "created": request.Created, "submittedTimestamp": submitted,
+			"responder": responder, "answers": fakeClosedPage(answers), "comments": fakeClosedPage(comments),
+		}})
+	}
+	return fakeFeedbackEntry{Listed: request.Listed, Recipient: request.Recipient, Data: map[string]any{
+		"pk": request.PK, "title": request.Title, "description": "<p>Please give feedback</p>",
+		"type": 0, "state": 1, "statusByRecipient": request.Status,
+		"created": request.Created, "sentDate": request.Created, "dueDatetime": nil, "isArchived": false,
+		"respondentsNamesVisibleTo": 2, "numResponsesSubmitted": request.Submitted,
+		"canViewResponses": true, "canViewAllResponses": request.CanViewAll,
+		"creator":       fakeGQLUser(fakeManager, "Blake Chen"),
+		"recipient":     fakeGQLUser(request.Recipient, "Alex Morgan"),
+		"responders":    fakeClosedPage(responders),
+		"questionSet":   map[string]any{"questions": fakeClosedPage([]any{})},
+		"feedbacks":     fakeClosedPage(feedbacks),
+		"curatedReport": nil,
+	}}
+}
+
+func linkFeedback(review fakeReview, requests, threesixty []int) fakeReview {
+	edges := func(pks []int) []any {
+		linked := []any{}
+		for _, pk := range pks {
+			linked = append(linked, map[string]any{"node": map[string]any{"pk": pk, "title": fmt.Sprintf("Feedback %d", pk)}})
+		}
+		return linked
+	}
+	sections := review.Data["snapshotGroup"].(map[string]any)["sections"].(map[string]any)
+	items := sections["edges"].([]any)[0].(map[string]any)["node"].(map[string]any)["items"].(map[string]any)
+	items["edges"] = append(items["edges"].([]any), map[string]any{"node": map[string]any{
+		"type": "feedback_info", "pk": review.Data["pk"].(int)*100 + 99,
+		"feedbackRequests":           fakeClosedPage(edges(requests)),
+		"threesixtyFeedbackRequests": fakeClosedPage(edges(threesixty)),
+	}})
+	return review
+}
+
 type fake7Geese struct {
 	t      *testing.T
 	server *httptest.Server
@@ -73,6 +202,7 @@ type fake7Geese struct {
 	failures         map[string]int
 	objectives       map[int]map[string][]fakeObjective
 	reviews          map[int][]fakeReview
+	feedback         []fakeFeedbackEntry
 	meetings         map[int]map[string]any
 	recognitionFeed  []map[string]any
 	notificationFeed []map[string]any
@@ -269,8 +399,6 @@ func newFake7Geese(t *testing.T) *fake7Geese {
 				{"id": 9001, "content": "note one"},
 				{"id": 9002, "content": "note two"},
 			},
-			"/api/v1/feedbackrequest/":   {},
-			"/api/v1/feedback/":          {},
 			"/api/v1/performancecycles/": {{"id": 8001, "name": "Cycle"}},
 			"/api/v1/recognitionbadges/": {
 				{"id": 7001, "created": "2026-02-01T09:00:00+00:00", "sender": me, "recipient": manager, "badge": map[string]any{"name": "Star"}, "message": "thanks"},
@@ -309,12 +437,12 @@ func newFake7Geese(t *testing.T) *fake7Geese {
 		},
 		reviews: map[int][]fakeReview{
 			fakeMe: {
-				fakeSnapshot(71, 4, "Q1 review", "2026-01-01", "2026-03-31", []int{711, 712}, []fakeAnswer{
+				linkFeedback(fakeSnapshot(71, 4, "Q1 review", "2026-01-01", "2026-03-31", []int{711, 712}, []fakeAnswer{
 					{ItemPK: 711, ResponderPK: fakeManager, TypeName: "TextItemAnswerNode", Text: "<p>Manager answer</p>"},
 					{ItemPK: 711, ResponderPK: fakeMe, TypeName: "TextItemAnswerNode", Text: "<p>My answer</p>"},
 					{ItemPK: 712, ResponderPK: fakeMe, TypeName: "TextItemAnswerNode", Text: ""},
-				}),
-				fakeSnapshot(72, 0, "H1 review", "2026-01-01", "2026-06-30", []int{721}, nil),
+				}), nil, []int{83}),
+				linkFeedback(fakeSnapshot(72, 0, "H1 review", "2026-01-01", "2026-06-30", []int{721}, nil), []int{81}, nil),
 			},
 			fakeReport: {
 				fakeSnapshot(73, 4, "2025 review", "2025-01-01", "2025-12-31", []int{731}, []fakeAnswer{
@@ -322,6 +450,34 @@ func newFake7Geese(t *testing.T) *fake7Geese {
 					{ItemPK: 731, ResponderPK: fakeMe, TypeName: "TextItemAnswerNode", Text: "Manager view"},
 				}),
 			},
+		},
+		feedback: []fakeFeedbackEntry{
+			fakeFeedback(fakeFeedbackRequest{
+				PK: 81, Recipient: fakeMe, Title: "Mid-Year feedback", Status: "COMPLETE", Created: "2026-05-18T10:00:00.123456+00:00",
+				Asked: []string{"Devon Ellis", "Blake Chen"}, Submitted: 2, CanViewAll: true, Listed: true,
+				Responses: []fakeFeedbackResponse{
+					{PK: 811, From: "Devon Ellis", Submitted: "2026-05-20T09:00:00+00:00", Comment: "<p>Thanks</p>", Answers: []fakeFeedbackAnswer{
+						{TypeName: "TextAnswerNode", Question: "What went well?", Hint: "<p>Give examples</p>", Text: "<p>Great work</p>"},
+						{TypeName: "TextAnswerNode", Question: "What to improve?", Text: ""},
+					}},
+					{PK: 812, Submitted: "2026-05-21T09:00:00+00:00", Answers: []fakeFeedbackAnswer{
+						{TypeName: "RangeAnswerNode", Question: "Rate the work", Number: 4},
+						{TypeName: "MultiOptionAnswerNode", Question: "Strengths", Options: []string{"Speed", "Quality"}},
+					}},
+				},
+			}),
+			fakeFeedback(fakeFeedbackRequest{
+				PK: 82, Recipient: fakeMe, Title: "Draft feedback", Status: "DRAFT", Created: "2025-11-02T09:00:00+00:00", Listed: true,
+			}),
+			fakeFeedback(fakeFeedbackRequest{
+				PK: 83, Recipient: fakeMe, Title: "Q1 feedback", Status: "COMPLETE", Created: "2026-02-01T09:00:00+00:00",
+				Asked: []string{"Blake Chen"}, Submitted: 1, CanViewAll: true,
+				Responses: []fakeFeedbackResponse{
+					{PK: 831, From: "Blake Chen", Submitted: "2026-02-03T09:00:00+00:00", Answers: []fakeFeedbackAnswer{
+						{TypeName: "TextAnswerNode", Question: "What went well?", Text: "Good quarter"},
+					}},
+				},
+			}),
 		},
 		meetings: map[int]map[string]any{
 			1: fakeFinalizedMeeting([]fakeQuestion{
@@ -673,6 +829,39 @@ func (f *fake7Geese) graphQL(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		data = map[string]any{"snapshot": found}
+	case "listFeedbackRequests":
+		if !strings.Contains(request.Query, "recipients: [$profileId]") || !strings.Contains(request.Query, "includeArchived: true") {
+			writeFakeJSON(w, map[string]any{"errors": []any{map[string]any{"message": "bad feedback request list query"}}})
+			return
+		}
+		var matching []fakeFeedbackEntry
+		for _, entry := range f.feedback {
+			if entry.Listed && entry.Recipient == intVar("profileId") {
+				matching = append(matching, entry)
+			}
+		}
+		start := intVar("offset")
+		if start > len(matching) {
+			start = len(matching)
+		}
+		end := start + intVar("first")
+		if end > len(matching) {
+			end = len(matching)
+		}
+		edges := []any{}
+		for _, entry := range matching[start:end] {
+			edges = append(edges, map[string]any{"node": map[string]any{"pk": entry.Data["pk"], "recipient": entry.Data["recipient"]}})
+		}
+		data = map[string]any{"feedbackRequests": map[string]any{"totalCount": len(matching), "edges": edges}}
+	case "getFeedbackRequest":
+		pk := intVar("pk")
+		var found any
+		for _, entry := range f.feedback {
+			if entry.Data["pk"] == pk {
+				found = entry.Data
+			}
+		}
+		data = map[string]any{"feedbackRequest": found}
 	case "getFinalizedOneonone":
 		var found any
 		if meeting, ok := f.meetings[intVar("oneononeId")]; ok {

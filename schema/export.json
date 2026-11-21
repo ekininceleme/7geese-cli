@@ -84,6 +84,170 @@
         "date"
       ]
     },
+    "exportFeedbackAnswer": {
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The question text"
+        },
+        "hint": {
+          "type": "string",
+          "description": "Guidance shown under the question"
+        },
+        "answer": {
+          "type": "string",
+          "description": "The answer: text or a number or the selected options"
+        },
+        "scale": {
+          "type": "string",
+          "description": "Range of a number answer if the question defines one"
+        },
+        "comments": {
+          "items": {
+            "$ref": "#/$defs/exportFeedbackComment"
+          },
+          "type": "array",
+          "description": "Comments on the answer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "question",
+        "answer"
+      ]
+    },
+    "exportFeedbackComment": {
+      "properties": {
+        "author": {
+          "type": "string",
+          "description": "Full name of the person who wrote the comment. Absent if 7Geese hides the name"
+        },
+        "created": {
+          "type": "string",
+          "description": "Time the comment was written (ISO 8601)"
+        },
+        "text": {
+          "type": "string",
+          "description": "The comment text"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "created",
+        "text"
+      ]
+    },
+    "exportFeedbackRequest": {
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Feedback request ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the feedback request"
+        },
+        "description": {
+          "type": "string",
+          "description": "Message of the feedback request"
+        },
+        "status": {
+          "type": "string",
+          "description": "Status that 7Geese gives for the recipient (for example DRAFT or IN_FLIGHT or COMPLETE)"
+        },
+        "requested_by": {
+          "type": "string",
+          "description": "Full name of the person who made the request"
+        },
+        "created": {
+          "type": "string",
+          "description": "Time the request was made (ISO 8601)"
+        },
+        "sent": {
+          "type": "string",
+          "description": "Time the request was sent (ISO 8601)"
+        },
+        "due": {
+          "type": "string",
+          "description": "Due time of the responses (ISO 8601)"
+        },
+        "asked": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Full names of the people who were asked for feedback. Only the names that 7Geese shows"
+        },
+        "asked_count": {
+          "type": "integer",
+          "description": "Number of people who were asked for feedback"
+        },
+        "responses_submitted": {
+          "type": "integer",
+          "description": "Number of responses that 7Geese reports as submitted"
+        },
+        "all_responses_visible": {
+          "type": "boolean",
+          "description": "False if 7Geese does not show all the responses to the session user. The responses list can then be incomplete"
+        },
+        "responses": {
+          "items": {
+            "$ref": "#/$defs/exportFeedbackResponse"
+          },
+          "type": "array",
+          "description": "Responses that 7Geese shows to the session user"
+        },
+        "curated_report": {
+          "$ref": "#/$defs/exportPeerReport",
+          "description": "Curated report of the responses if one is available"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "status",
+        "created",
+        "asked_count",
+        "responses_submitted",
+        "all_responses_visible",
+        "responses"
+      ]
+    },
+    "exportFeedbackResponse": {
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "Full name of the person who gave the feedback. Absent if 7Geese hides the name"
+        },
+        "submitted": {
+          "type": "string",
+          "description": "Time the response was submitted (ISO 8601). Absent if the response is not submitted"
+        },
+        "answers": {
+          "items": {
+            "$ref": "#/$defs/exportFeedbackAnswer"
+          },
+          "type": "array",
+          "description": "Answers of this response"
+        },
+        "comments": {
+          "items": {
+            "$ref": "#/$defs/exportFeedbackComment"
+          },
+          "type": "array",
+          "description": "Comments on the response"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "answers"
+      ]
+    },
     "exportKR": {
       "properties": {
         "id": {
@@ -364,6 +528,13 @@
           "type": "array",
           "description": "Performance reviews in all workflow states"
         },
+        "feedback": {
+          "items": {
+            "$ref": "#/$defs/exportFeedbackRequest"
+          },
+          "type": "array",
+          "description": "Feedback requests about the user with the responses. Newest first. Only for the session user"
+        },
         "oneonones": {
           "items": {
             "$ref": "#/$defs/exportMeeting"
@@ -491,6 +662,13 @@
         "peer_feedback": {
           "$ref": "#/$defs/exportPeerReport",
           "description": "Curated peer feedback report if one was published for this cycle"
+        },
+        "feedback_request_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array",
+          "description": "IDs of the feedback requests that are attached to this review. For the session user the requests and their responses are in the feedback section"
         }
       },
       "additionalProperties": false,

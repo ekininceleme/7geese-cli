@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -401,6 +403,7 @@ func TestExport_FailsOnIncompleteLocalData(t *testing.T) {
 		if _, err := x.db.PurgeExcept([]store.DatasetKey{
 			sessionDataset(resourceSessionUser), sessionDataset(resourceUserProfile),
 			userDataset(resourceUserObjectives, fakeMe), userDataset(resourceUserSnapshots, fakeMe),
+			sessionDataset(resourceFeedbackRequests),
 		}); err != nil {
 			t.Fatalf("purging: %v", err)
 		}
@@ -586,7 +589,7 @@ func TestMeExportCommand_YesRunsSyncFirst(t *testing.T) {
 	if out.Me.Profile.ID != fakeMe || len(out.Me.Objectives) != 59 || len(out.DirectReports) != 1 {
 		t.Errorf("export = profile %d, %d objectives, %d direct reports", out.Me.Profile.ID, len(out.Me.Objectives), len(out.DirectReports))
 	}
-	if !strings.Contains(stderr, "Sync complete: 323 records in 15 datasets") {
+	if !strings.Contains(stderr, "Sync complete: 326 records in 14 datasets") {
 		t.Errorf("stderr has no sync result: %s", stderr)
 	}
 
@@ -647,5 +650,183 @@ func TestMeExportCommand_FlagsAndOutputFile(t *testing.T) {
 	var out exportOutput
 	if err := json.Unmarshal(data, &out); err != nil || out.Me.Profile.ID != fakeReport {
 		t.Errorf("output file: profile %d, err %v", out.Me.Profile.ID, err)
+	}
+}
+
+func feedbackIDs(requests []exportFeedbackRequest) string {
+	ids := []string{}
+	for _, request := range requests {
+		ids = append(ids, strconv.Itoa(request.ID))
+	}
+	return strings.Join(ids, ",")
+}
+
+func TestExport_Feedback(t *testing.T) {
+	x := syncedFixture(t)
+	out := mustExport(t, x, "", "")
+
+	if out.Me.Feedback == nil {
+		t.Fatal("the export of the session user has no feedback section")
+	}
+	feedback := *out.Me.Feedback
+	if order := feedbackIDs(feedback); order != "81,83,82" {
+		t.Fatalf("feedback order = %s, want 81,83,82 (newest first)", order)
+	}
+	midYear := feedback[0]
+	if midYear.Title != "Mid-Year feedback" || midYear.Description != "Please give feedback" || midYear.Status != "COMPLETE" ||
+		midYear.RequestedBy != "Blake Chen" || midYear.Created != "2026-05-18T10:00:00.123456+00:00" || midYear.Sent != midYear.Created || midYear.Due != "" ||
+		strings.Join(midYear.Asked, ",") != "Devon Ellis,Blake Chen" || midYear.AskedCount != 2 ||
+		midYear.ResponsesSubmitted != 2 || !midYear.AllResponsesVisible || midYear.CuratedReport != nil {
+		t.Errorf("feedback request 81 = %+v", midYear)
+	}
+	if len(midYear.Responses) != 2 {
+		t.Fatalf("feedback request 81 has %d responses, want 2", len(midYear.Responses))
+	}
+	named := midYear.Responses[0]
+	if named.From != "Devon Ellis" || named.Submitted != "2026-05-20T09:00:00+00:00" {
+		t.Errorf("first response = %+v", named)
+	}
+	if len(named.Answers) != 1 || named.Answers[0].Question != "What went well?" || named.Answers[0].Hint != "Give examples" || named.Answers[0].Answer != "Great work" || named.Answers[0].Scale != "" {
+		t.Errorf("answers of the first response = %+v, want one answer (the empty answer is omitted)", named.Answers)
+	}
+	if len(named.Comments) != 1 || named.Comments[0] != (exportFeedbackComment{Author: "Alex Morgan", Created: "2026-05-22T09:00:00+00:00", Text: "Thanks"}) {
+		t.Errorf("comments of the first response = %+v", named.Comments)
+	}
+	anonymous := midYear.Responses[1]
+	if anonymous.From != "" || len(anonymous.Answers) != 2 {
+		t.Fatalf("second response = %+v, want no name and 2 answers", anonymous)
+	}
+	if rating := anonymous.Answers[0]; rating.Answer != "4" || rating.Scale != "1 (Poor) to 5 (Great)" {
+		t.Errorf("range answer = %+v", rating)
+	}
+	if choices := anonymous.Answers[1]; choices.Answer != "Speed, Quality" || choices.Scale != "" {
+		t.Errorf("choice answer = %+v", choices)
+	}
+	if draft := feedback[2]; draft.Status != "DRAFT" || draft.AllResponsesVisible || draft.Responses == nil || len(draft.Responses) != 0 {
+		t.Errorf("draft feedback request = %+v, want an empty response list", draft)
+	}
+
+	linked := map[int]string{}
+	for _, review := range out.Me.Reviews {
+		linked[review.ID] = fmt.Sprint(review.FeedbackRequestIDs)
+	}
+	if linked[71] != "[83]" || linked[72] != "[81]" {
+		t.Errorf("feedback requests of the reviews = %v, want 71:[83] and 72:[81]", linked)
+	}
+
+	report := out.DirectReports[0]
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("encoding: %v", err)
+	}
+	if report.Feedback != nil || strings.Contains(string(encoded), `"feedback":`) {
+		t.Errorf("the direct report has a feedback section: %s", encoded)
+	}
+	if other := mustExport(t, x, "300", ""); other.Me.Feedback != nil {
+		t.Errorf("--user 300 has the feedback of the session user")
+	}
+}
+
+func TestExport_FeedbackSince(t *testing.T) {
+	x := syncedFixture(t)
+	cases := []struct{ since, want, why string }{
+		{"2026-04-01", "81", "81 was sent after the date"},
+		{"2026-02-02", "81,83", "83 got a response after the date"},
+		{"2026-06-01", "81", "81 is attached to review 72, which is in the export"},
+		{"2026-07-01", "", "no request is in the period and no review is in the export"},
+	}
+	for _, c := range cases {
+		out := mustExport(t, x, "", c.since)
+		if out.Me.Feedback == nil {
+			t.Fatalf("--since %s: no feedback section", c.since)
+		}
+		if got := feedbackIDs(*out.Me.Feedback); got != c.want {
+			t.Errorf("--since %s: feedback = %q, want %q (%s)", c.since, got, c.want, c.why)
+		}
+	}
+	encoded, err := json.Marshal(mustExport(t, x, "", "2026-07-01").Me)
+	if err != nil {
+		t.Fatalf("encoding: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"feedback":[]`) {
+		t.Errorf("an empty feedback list is not encoded as []: %s", encoded)
+	}
+}
+
+func TestExport_FeedbackFailsOnIncompleteLocalData(t *testing.T) {
+	key := sessionDataset(resourceFeedbackRequests)
+	t.Run("dataset that is not synced", func(t *testing.T) {
+		x := syncedFixture(t)
+		if _, err := x.db.DB().Exec(`DELETE FROM sync_state WHERE resource_type = ?`, resourceFeedbackRequests); err != nil {
+			t.Fatalf("removing sync state: %v", err)
+		}
+		want := "the dataset feedback_requests is not synced"
+		if _, err := buildExport(x.db, "", "", fakeNow); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("export error = %v, want %q", err, want)
+		}
+		if reason, err := missingSyncReason(x.db); err != nil || reason != want {
+			t.Errorf("missingSyncReason = %q (err %v), want %q", reason, err, want)
+		}
+	})
+	t.Run("request of a review that is not stored", func(t *testing.T) {
+		x := syncedFixture(t)
+		if err := x.db.ReplaceAll(key, nil); err != nil {
+			t.Fatalf("clearing feedback requests: %v", err)
+		}
+		_, err := buildExport(x.db, "", "", fakeNow)
+		if err == nil || !strings.Contains(err.Error(), "review 72 refers to feedback request 81, which is not in the synced feedback requests") {
+			t.Errorf("error = %v, want a missing feedback request error", err)
+		}
+	})
+	t.Run("request with no dates", func(t *testing.T) {
+		x := syncedFixture(t)
+		data := json.RawMessage(`{"pk":90,"title":"x","created":"","numResponsesSubmitted":0,"canViewResponses":true,"canViewAllResponses":true}`)
+		if err := x.db.ReplaceAll(key, []store.Record{{ID: "90", Data: data}}); err != nil {
+			t.Fatalf("replacing feedback requests: %v", err)
+		}
+		_, err := buildExport(x.db, "", "2026-07-01", fakeNow)
+		if err == nil || !strings.Contains(err.Error(), "feedback request 90 date") {
+			t.Errorf("error = %v, want a date error", err)
+		}
+	})
+}
+
+func TestExportFeedbackRequestFromNode_Failures(t *testing.T) {
+	decode := func(raw string) gqlFeedbackRequest {
+		var request gqlFeedbackRequest
+		if err := json.Unmarshal([]byte(raw), &request); err != nil {
+			t.Fatalf("decoding: %v", err)
+		}
+		return request
+	}
+	answer := func(node string) string {
+		return `{"pk":9,"numResponsesSubmitted":1,"canViewAllResponses":true,"feedbacks":{"edges":[{"node":{"pk":1,"answers":{"edges":[{"node":` + node + `}]}}}]}}`
+	}
+	cases := []struct{ name, raw, want string }{
+		{"no response count", `{"pk":9,"canViewAllResponses":true}`, "stored feedback request 9 does not say how many responses it has"},
+		{"unknown answer type", answer(`{"__typename":"MatrixAnswerNode","pk":5,"question":{"title":"q"}}`), `"MatrixAnswerNode"`},
+		{"text answer with no text", answer(`{"__typename":"TextAnswerNode","pk":5,"question":{"title":"q"}}`), "text answer 5 with no text"},
+		{"number answer with no number", answer(`{"__typename":"NpsAnswerNode","pk":5,"question":{"title":"q"}}`), "number answer 5 with no number"},
+		{"choice answer with no choices", answer(`{"__typename":"MultiOptionAnswerNode","pk":5,"question":{"title":"q"}}`), "choice answer 5 with no choices"},
+		{"answer with no question", answer(`{"__typename":"TextAnswerNode","pk":5,"text":"x"}`), "answer 5 with no question"},
+	}
+	for _, c := range cases {
+		if _, err := exportFeedbackRequestFromNode(decode(c.raw)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: error = %v, want %q", c.name, err, c.want)
+		}
+	}
+
+	curated := decode(`{"pk":9,"title":"360","numResponsesSubmitted":2,"canViewAllResponses":false,"curatedReport":{"publishedDatetime":"2026-05-01T00:00:00+00:00","sortedCuratedQuestions":{"edges":[{"node":{"comment":"","question":{"title":"Strengths?"},"answers":{"edges":[{"node":{"answer":"<p>Clear</p>"}},{"node":{}}]}}}]}}}`)
+	exported, err := exportFeedbackRequestFromNode(curated)
+	if err != nil {
+		t.Fatalf("curated report: %v", err)
+	}
+	report := exported.CuratedReport
+	if report == nil || report.Title != "360" || report.Published != "2026-05-01T00:00:00+00:00" || len(report.Questions) != 1 ||
+		report.Questions[0].Question != "Strengths?" || strings.Join(report.Questions[0].Answers, "|") != "Clear" {
+		t.Errorf("curated report = %+v", report)
+	}
+	if exported.AllResponsesVisible || exported.ResponsesSubmitted != 2 || len(exported.Responses) != 0 {
+		t.Errorf("request with a curated report = %+v", exported)
 	}
 }

@@ -109,6 +109,33 @@ var viewDefinitions = []viewDefinition{
 			json_extract(data,'$.content') AS content
 		FROM resources
 		WHERE resource_type = 'notifications' AND owner_id = 0`},
+	{Name: "feedback_request_view", Select: `
+		SELECT
+			CAST(json_extract(data,'$.pk') AS INTEGER) AS id,
+			json_extract(data,'$.title') AS title,
+			json_extract(data,'$.statusByRecipient') AS status,
+			json_extract(data,'$.created') AS created,
+			json_extract(data,'$.sentDate') AS sent_date,
+			json_extract(data,'$.creator.fullName') AS creator_name,
+			json_extract(data,'$.numResponsesSubmitted') AS responses_submitted,
+			data
+		FROM resources
+		WHERE resource_type = 'feedback_requests' AND owner_id = 0`},
+	{Name: "feedback_answer_view", Select: `
+		SELECT
+			CAST(json_extract(request.data,'$.pk') AS INTEGER) AS request_id,
+			json_extract(request.data,'$.title') AS request_title,
+			CAST(json_extract(response.value,'$.node.pk') AS INTEGER) AS response_id,
+			json_extract(response.value,'$.node.responder.profile.fullName') AS responder_name,
+			json_extract(response.value,'$.node.submittedTimestamp') AS submitted_at,
+			json_extract(answer.value,'$.node.question.title') AS question,
+			json_extract(answer.value,'$.node.text') AS answer_text,
+			json_extract(answer.value,'$.node.number') AS answer_number,
+			json_extract(answer.value,'$.node') AS data
+		FROM resources AS request,
+			json_each(request.data,'$.feedbacks.edges') AS response,
+			json_each(response.value,'$.node.answers.edges') AS answer
+		WHERE request.resource_type = 'feedback_requests' AND request.owner_id = 0`},
 }
 
 var legacyOwnedPrefixes = []string{"user_objectives:", "user_snapshots:"}

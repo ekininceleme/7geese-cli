@@ -28,8 +28,7 @@ func TestRunSync_StoresAllDatasets(t *testing.T) {
 		"oneonones":            4,
 		"finalized_oneonones":  2,
 		"oneononenotes":        2,
-		"feedbackrequest":      0,
-		"peer_feedback":        0,
+		"feedback_requests":    3,
 		"performancecycles":    1,
 		"recognitionbadges":    2,
 		"recognition_received": 120,
@@ -164,8 +163,8 @@ func TestRunSync_FailedDatasetKeepsEarlierDataAndDoesNotPurge(t *testing.T) {
 	if err == nil {
 		t.Fatal("sync returned no error although oneononenotes failed")
 	}
-	if !strings.Contains(err.Error(), "oneononenotes") || !strings.Contains(err.Error(), "1 of 13") {
-		t.Errorf("error = %q, want it to name oneononenotes and 1 of 13", err)
+	if !strings.Contains(err.Error(), "oneononenotes") || !strings.Contains(err.Error(), "1 of 12") {
+		t.Errorf("error = %q, want it to name oneononenotes and 1 of 12", err)
 	}
 	if _, ok := x.reporter.failed["oneononenotes"]; !ok || len(x.reporter.failed) != 1 {
 		t.Errorf("failed = %v, want only oneononenotes", x.reporter.failed)
@@ -294,7 +293,7 @@ func TestRunSync_RefusesDatabaseOfAnotherUser(t *testing.T) {
 
 func TestRunSync_PurgesLegacyDatasets(t *testing.T) {
 	x := newSyncFixture(t)
-	for _, name := range []string{"objectives", "teams"} {
+	for _, name := range []string{"objectives", "teams", "feedbackrequest", "peer_feedback"} {
 		if err := x.db.ReplaceAll(sessionDataset(name), []store.Record{{ID: "1", Data: json.RawMessage(`{"id":1}`)}}); err != nil {
 			t.Fatalf("seeding %s: %v", name, err)
 		}
@@ -302,11 +301,13 @@ func TestRunSync_PurgesLegacyDatasets(t *testing.T) {
 	x.mustSync(t)
 
 	names := x.datasetNames(t)
-	if containsString(names, "objectives") || containsString(names, "teams") {
-		t.Errorf("legacy datasets stay after a full sync: %v", names)
-	}
-	if !containsString(x.reporter.purged, "objectives") || !containsString(x.reporter.purged, "teams") {
-		t.Errorf("purged = %v, want objectives and teams", x.reporter.purged)
+	for _, name := range []string{"objectives", "teams", "feedbackrequest", "peer_feedback"} {
+		if containsString(names, name) {
+			t.Errorf("legacy dataset %s stays after a full sync: %v", name, names)
+		}
+		if !containsString(x.reporter.purged, name) {
+			t.Errorf("purged = %v, want %s", x.reporter.purged, name)
+		}
 	}
 }
 
@@ -443,14 +444,14 @@ func TestRunSync_JSONEvents(t *testing.T) {
 		}
 		last = event
 	}
-	if events["sync_start"] != 15 || events["sync_complete"] != 15 || events["sync_error"] != 0 || events["sync_summary"] != 1 {
-		t.Errorf("events = %v, want 15 starts, 15 completions, 1 summary", events)
+	if events["sync_start"] != 14 || events["sync_complete"] != 14 || events["sync_error"] != 0 || events["sync_summary"] != 1 {
+		t.Errorf("events = %v, want 14 starts, 14 completions, 1 summary", events)
 	}
 	if !ownerSeen {
 		t.Errorf("no event names the objectives of the direct report with owner_id")
 	}
-	if last["event"] != "sync_summary" || last["success"] != float64(15) || last["errored"] != float64(0) || last["total_records"] != float64(323) {
-		t.Errorf("last event = %v, want a summary with 15 datasets and 323 records", last)
+	if last["event"] != "sync_summary" || last["success"] != float64(14) || last["errored"] != float64(0) || last["total_records"] != float64(326) {
+		t.Errorf("last event = %v, want a summary with 14 datasets and 326 records", last)
 	}
 }
 
@@ -480,10 +481,10 @@ func TestSyncCommand_WritesJSONEventsAndFailsWithExitError(t *testing.T) {
 		t.Errorf("output has no sync_summary event: %s", out)
 	}
 
-	x.fake.change(func() { x.fake.failures["/api/v1/feedback/"] = -1 })
+	x.fake.change(func() { x.fake.failures["/api/v1/oneononenotes/"] = -1 })
 	out, err = run()
-	if err == nil || !strings.Contains(err.Error(), "peer_feedback") {
-		t.Fatalf("error = %v, want a failure of peer_feedback", err)
+	if err == nil || !strings.Contains(err.Error(), "oneononenotes") {
+		t.Fatalf("error = %v, want a failure of oneononenotes", err)
 	}
 	if !strings.Contains(out, `"event":"sync_error"`) {
 		t.Errorf("output has no sync_error event: %s", out)
@@ -701,5 +702,142 @@ func TestListFeed_EndOfFeed(t *testing.T) {
 				t.Errorf("records = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+func TestRunSync_StoresFeedbackOfTheListAndOfTheReviews(t *testing.T) {
+	x := newSyncFixture(t)
+	x.mustSync(t)
+
+	key := sessionDataset(resourceFeedbackRequests)
+	if ids := x.ids(t, key); strings.Join(ids, ",") != "81,82,83" {
+		t.Fatalf("feedback requests = %v, want 81 and 82 of the list and 83 of review 71", ids)
+	}
+	raw, found, err := x.db.GetRecord(key, "81")
+	if err != nil || !found {
+		t.Fatalf("feedback request 81: found %v, err %v", found, err)
+	}
+	if strings.Contains(string(raw), "pageInfo") {
+		t.Errorf("page information was stored with feedback request 81: %s", raw)
+	}
+	var request gqlFeedbackRequest
+	if err := json.Unmarshal(raw, &request); err != nil {
+		t.Fatalf("decoding feedback request 81: %v", err)
+	}
+	if len(request.Feedbacks.Edges) != 2 || len(request.Responders.Edges) != 2 {
+		t.Fatalf("feedback request 81 has %d responses and %d responders, want 2 and 2", len(request.Feedbacks.Edges), len(request.Responders.Edges))
+	}
+	first := request.Feedbacks.Edges[0].Node
+	if first.Responder == nil || first.Responder.Profile == nil || first.Responder.Profile.FullName != "Devon Ellis" || len(first.Answers.Edges) != 2 {
+		t.Errorf("first response of feedback request 81 = %+v", first)
+	}
+	if text := first.Answers.Edges[0].Node.Text; text == nil || *text != "<p>Great work</p>" {
+		t.Errorf("first answer text = %v", text)
+	}
+	if second := request.Feedbacks.Edges[1].Node; second.Responder == nil || second.Responder.Profile != nil {
+		t.Errorf("the anonymous response has a responder profile: %+v", second.Responder)
+	}
+
+	review, found, err := x.db.GetRecord(userDataset(resourceUserSnapshots, fakeMe), "72")
+	if err != nil || !found {
+		t.Fatalf("review 72: found %v, err %v", found, err)
+	}
+	var snapshot gqlSnapshotFull
+	if err := json.Unmarshal(review, &snapshot); err != nil {
+		t.Fatalf("decoding review 72: %v", err)
+	}
+	if linked, err := snapshot.feedbackRequestIDs(); err != nil || len(linked) != 1 || linked[0] != 81 {
+		t.Errorf("feedback requests of review 72 = %v (err %v), want 81", linked, err)
+	}
+	if count := x.fake.requestCount("graphql:listFeedbackRequests"); count != 1 {
+		t.Errorf("%d feedback list requests were sent, want 1 for the session user only", count)
+	}
+}
+
+func TestRunSync_FeedbackThatIsNotCompleteFails(t *testing.T) {
+	entry := func(f *fake7Geese, pk int) *fakeFeedbackEntry {
+		for i := range f.feedback {
+			if f.feedback[i].Data["pk"] == pk {
+				return &f.feedback[i]
+			}
+		}
+		t.Fatalf("the fake has no feedback request %d", pk)
+		return nil
+	}
+	responses := func(f *fake7Geese) map[string]any {
+		return entry(f, 81).Data["feedbacks"].(map[string]any)
+	}
+	firstResponse := func(f *fake7Geese) map[string]any {
+		return responses(f)["edges"].([]any)[0].(map[string]any)["node"].(map[string]any)
+	}
+	cases := []struct {
+		name   string
+		mutate func(f *fake7Geese)
+		want   string
+	}{
+		{"responses are missing", func(f *fake7Geese) { entry(f, 81).Data["numResponsesSubmitted"] = 3 }, "feedback request 81 has 3 submitted responses but 7Geese returned 2"},
+		{"a response is not submitted", func(f *fake7Geese) { firstResponse(f)["submittedTimestamp"] = nil }, "feedback request 81 has 2 submitted responses but 7Geese returned 1"},
+		{"more responses than one page", func(f *fake7Geese) { responses(f)["pageInfo"] = map[string]any{"hasNextPage": true} }, "feedback request 81 has more responses than one request returns"},
+		{"more answers than one page", func(f *fake7Geese) {
+			firstResponse(f)["answers"].(map[string]any)["pageInfo"] = map[string]any{"hasNextPage": true}
+		}, "feedback request 81 has more answers than one request returns"},
+		{"no page information", func(f *fake7Geese) { delete(responses(f), "pageInfo") }, "feedback request 81 has no page information for its responses"},
+		{"no response count", func(f *fake7Geese) { entry(f, 81).Data["numResponsesSubmitted"] = nil }, "feedback request 81 does not say how many responses it has"},
+		{"request of a review that is not visible", func(f *fake7Geese) { f.feedback = f.feedback[:2] }, "feedback request 83 is in the feedback list or in a review but its content is not visible"},
+		{"list of a different recipient", func(f *fake7Geese) { entry(f, 82).Data["recipient"] = fakeGQLUser(fakeColleague, "Devon Ellis") }, "the list does not obey the recipient filter"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			x := newSyncFixture(t)
+			x.fake.change(func() { c.mutate(x.fake) })
+
+			err := x.sync()
+			if err == nil || !strings.Contains(err.Error(), resourceFeedbackRequests) {
+				t.Fatalf("error = %v, want a failure of %s", err, resourceFeedbackRequests)
+			}
+			if message := x.reporter.failed[resourceFeedbackRequests]; !strings.Contains(message, c.want) {
+				t.Errorf("failure message = %q, want %q", message, c.want)
+			}
+			if names := x.datasetNames(t); containsString(names, resourceFeedbackRequests) {
+				t.Errorf("feedback that is not complete was stored: %v", names)
+			}
+		})
+	}
+}
+
+func TestRunSync_StoresFeedbackWhenNotAllResponsesAreVisible(t *testing.T) {
+	x := newSyncFixture(t)
+	x.fake.change(func() {
+		x.fake.feedback[0].Data["numResponsesSubmitted"] = 5
+		x.fake.feedback[0].Data["canViewAllResponses"] = false
+	})
+	x.mustSync(t)
+
+	raw, found, err := x.db.GetRecord(sessionDataset(resourceFeedbackRequests), "81")
+	if err != nil || !found {
+		t.Fatalf("feedback request 81: found %v, err %v", found, err)
+	}
+	var request gqlFeedbackRequest
+	if err := json.Unmarshal(raw, &request); err != nil {
+		t.Fatalf("decoding feedback request 81: %v", err)
+	}
+	if request.CanViewAllResponses == nil || *request.CanViewAllResponses || request.NumResponsesSubmitted == nil || *request.NumResponsesSubmitted != 5 || len(request.Feedbacks.Edges) != 2 {
+		t.Errorf("feedback request 81 = canViewAllResponses %v, numResponsesSubmitted %v, %d responses", request.CanViewAllResponses, request.NumResponsesSubmitted, len(request.Feedbacks.Edges))
+	}
+}
+
+func TestRunSync_ReviewFailureMarksFeedbackAsFailed(t *testing.T) {
+	x := newSyncFixture(t)
+	x.fake.change(func() { x.fake.failures["graphql:getSingleSnapshot"] = -1 })
+
+	err := x.sync()
+	if err == nil || !strings.Contains(err.Error(), resourceFeedbackRequests) || !strings.Contains(err.Error(), "user_snapshots[100]") {
+		t.Fatalf("error = %v, want a failure of the reviews and of the feedback requests", err)
+	}
+	if message := x.reporter.failed[resourceFeedbackRequests]; !strings.Contains(message, "not synced because user_snapshots failed") {
+		t.Errorf("failure message = %q", message)
+	}
+	if count := x.fake.requestCount("graphql:listFeedbackRequests"); count != 0 {
+		t.Errorf("%d feedback list requests were sent although the reviews failed", count)
 	}
 }

@@ -569,3 +569,62 @@ func TestCompact_MergesTheSearchIndex(t *testing.T) {
 		t.Errorf("search for a purged row = %d hits, want 0", n)
 	}
 }
+
+func TestViews_ExposeFeedback(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+	key := DatasetKey{ResourceType: "feedback_requests", OwnerID: SessionOwner}
+	data := json.RawMessage(`{"pk":81,"title":"Mid-Year","statusByRecipient":"COMPLETE","created":"2026-05-18T10:00:00+00:00","sentDate":"2026-05-18T10:05:00+00:00",
+		"creator":{"fullName":"Mona Manager"},"numResponsesSubmitted":2,"feedbacks":{"edges":[
+		{"node":{"pk":811,"submittedTimestamp":"2026-05-20T09:00:00+00:00","responder":{"profile":{"fullName":"Pat Peer"}},"answers":{"edges":[
+			{"node":{"pk":1,"text":"Great work","question":{"title":"What went well?"}}},
+			{"node":{"pk":2,"number":4,"question":{"title":"Rate the work"}}}]}}},
+		{"node":{"pk":812,"submittedTimestamp":null,"responder":{"profile":null},"answers":{"edges":[]}}}]}}`)
+	if err := s.ReplaceAll(key, []Record{{ID: "81", Data: data}, {ID: "82", Data: json.RawMessage(`{"pk":82,"title":"Draft","feedbacks":{"edges":[]}}`)}}); err != nil {
+		t.Fatalf("storing feedback requests: %v", err)
+	}
+
+	var id, submitted int
+	var title, status, created, sent, creator string
+	if err := s.DB().QueryRow(`SELECT id, title, status, created, sent_date, creator_name, responses_submitted FROM feedback_request_view WHERE id = 81`).
+		Scan(&id, &title, &status, &created, &sent, &creator, &submitted); err != nil {
+		t.Fatalf("feedback_request_view: %v", err)
+	}
+	if id != 81 || title != "Mid-Year" || status != "COMPLETE" || created != "2026-05-18T10:00:00+00:00" || sent != "2026-05-18T10:05:00+00:00" || creator != "Mona Manager" || submitted != 2 {
+		t.Errorf("feedback_request_view = %d %q %q %q %q %q %d", id, title, status, created, sent, creator, submitted)
+	}
+	var requests int
+	if err := s.DB().QueryRow(`SELECT count(*) FROM feedback_request_view`).Scan(&requests); err != nil || requests != 2 {
+		t.Errorf("feedback_request_view has %d rows (err %v), want 2", requests, err)
+	}
+
+	rows, err := s.DB().Query(`SELECT request_id, request_title, response_id, responder_name, submitted_at, question, answer_text, answer_number FROM feedback_answer_view ORDER BY question`)
+	if err != nil {
+		t.Fatalf("feedback_answer_view: %v", err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var requestID, responseID int
+		var requestTitle, responder, submittedAt, question string
+		var text sql.NullString
+		var number sql.NullInt64
+		if err := rows.Scan(&requestID, &requestTitle, &responseID, &responder, &submittedAt, &question, &text, &number); err != nil {
+			t.Fatalf("scanning feedback_answer_view: %v", err)
+		}
+		got = append(got, fmt.Sprintf("%d|%s|%d|%s|%s|%s|%s|%d", requestID, requestTitle, responseID, responder, submittedAt, question, text.String, number.Int64))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading feedback_answer_view: %v", err)
+	}
+	want := []string{
+		"81|Mid-Year|811|Pat Peer|2026-05-20T09:00:00+00:00|Rate the work||4",
+		"81|Mid-Year|811|Pat Peer|2026-05-20T09:00:00+00:00|What went well?|Great work|0",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("feedback_answer_view = %v, want %v", got, want)
+	}
+}

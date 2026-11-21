@@ -53,7 +53,7 @@ These are all the commands. There are no other commands.
 
 Each run is a full refresh. Records that were changed in 7Geese are updated. Records that were deleted in 7Geese are deleted from the local database.
 
-Datasets: user profiles, 1:1 meetings and their notes, objectives with the full check-in history, reviews, recognition (given and received), check-ins, notifications, feedback requests and peer feedback. The objectives and reviews of the direct reports are included.
+Datasets: user profiles, 1:1 meetings and their notes, objectives with the full check-in history, reviews, the feedback requests about the user with their responses, recognition (given and received), check-ins and notifications. The objectives and reviews of the direct reports are included.
 
 If a dataset fails, its earlier local data stays and the exit code is not 0. Run the command again.
 
@@ -68,10 +68,11 @@ The output is one JSON event for each dataset on stdout and a final `sync_summar
 7geese-cli me export --yes | jq '.me.objectives'
 ```
 
-- `me` has the sections `profile`, `objectives`, `reviews`, `oneonones`, `recognitions`, `checkins` and `notifications`.
+- `me` has the sections `profile`, `objectives`, `reviews`, `feedback`, `oneonones`, `recognitions`, `checkins` and `notifications`.
+- `feedback` has the feedback requests about the user with the responses. Each review has `feedback_request_ids` for its attached requests.
 - `direct_reports` has the profile, the objectives and the reviews of each direct report.
 - `synced_at` shows the age of the local data. Run `sync` to refresh the data.
-- `--user` works only for direct reports. The sections `oneonones`, `recognitions`, `checkins` and `notifications` are available only for the session user.
+- `--user` works only for direct reports. The sections `feedback`, `oneonones`, `recognitions`, `checkins` and `notifications` are available only for the session user.
 - `--since` starts the period at 00:00 local time on the given date.
 - If the local data is not complete, the command asks to run `sync`. Use `--yes` to accept without a prompt.
 
@@ -88,7 +89,7 @@ The command reads only the local database. Run `sync` first.
 
 The database is at `~/.local/share/7geese-cli/data.db`. Use `--db <path>` to select a different file. One database holds the data of one 7Geese user.
 
-Typed views: `userprofile_view`, `oneonone_view`, `objective_view`, `review_view`, `recognition_given_view`, `recognition_received_view`, `checkin_view`, `notification_view`.
+Typed views: `userprofile_view`, `oneonone_view`, `objective_view`, `review_view`, `recognition_given_view`, `recognition_received_view`, `checkin_view`, `notification_view`, `feedback_request_view`, `feedback_answer_view`.
 
 ```bash
 sqlite3 ~/.local/share/7geese-cli/data.db "SELECT name, progress FROM objective_view WHERE closed = 0"

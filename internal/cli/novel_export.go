@@ -41,14 +41,15 @@ Sections:
   profile        name, email, position, hire date, manager
   objectives     OKRs with key results and the full check-in history
   reviews        performance reviews in all workflow states
+  feedback       feedback requests about you with the responses
   oneonones      1:1 meetings with the questions and answers of the two participants
   recognitions   badges received and given
   checkins       check-ins that you posted
   notifications  your notification feed
   direct_reports profile, objectives and reviews of each direct report
 
-The sections oneonones, recognitions, checkins and notifications are only
-available for you, because 7Geese gives them only for the session user.
+The sections feedback, oneonones, recognitions, checkins and notifications are
+only available for you, because 7Geese gives them only for the session user.
 The data of other users is limited to your direct reports.
 
 The field synced_at shows the age of the local data. Run 'sync' to refresh it.
@@ -119,6 +120,7 @@ func requiredDatasets(sessionUser int) []store.DatasetKey {
 		sessionDataset(resourceNotifications),
 		userDataset(resourceUserObjectives, sessionUser),
 		userDataset(resourceUserSnapshots, sessionUser),
+		sessionDataset(resourceFeedbackRequests),
 	}
 }
 
@@ -223,13 +225,14 @@ type exportOutput struct {
 }
 
 type exportProfile struct {
-	Profile       exportUser            `json:"profile" jsonschema:"description=User profile information"`
-	Objectives    []exportObjective     `json:"objectives" jsonschema:"description=OKRs where the user is an owner, stakeholder, or follower"`
-	Reviews       []exportReview        `json:"reviews" jsonschema:"description=Performance reviews in all workflow states"`
-	Oneonones     *[]exportMeeting      `json:"oneonones,omitempty" jsonschema:"description=1:1 meeting history with questions and answers from the two participants. Only for the session user"`
-	Recognitions  *exportRecognition    `json:"recognitions,omitempty" jsonschema:"description=Recognition badges sent and received. Only for the session user"`
-	Checkins      *[]exportUserCheckin  `json:"checkins,omitempty" jsonschema:"description=Check-ins that the user posted, newest first. Only for the session user"`
-	Notifications *[]exportNotification `json:"notifications,omitempty" jsonschema:"description=Notification feed, newest first. Only for the session user"`
+	Profile       exportUser               `json:"profile" jsonschema:"description=User profile information"`
+	Objectives    []exportObjective        `json:"objectives" jsonschema:"description=OKRs where the user is an owner, stakeholder, or follower"`
+	Reviews       []exportReview           `json:"reviews" jsonschema:"description=Performance reviews in all workflow states"`
+	Feedback      *[]exportFeedbackRequest `json:"feedback,omitempty" jsonschema:"description=Feedback requests about the user with the responses. Newest first. Only for the session user"`
+	Oneonones     *[]exportMeeting         `json:"oneonones,omitempty" jsonschema:"description=1:1 meeting history with questions and answers from the two participants. Only for the session user"`
+	Recognitions  *exportRecognition       `json:"recognitions,omitempty" jsonschema:"description=Recognition badges sent and received. Only for the session user"`
+	Checkins      *[]exportUserCheckin     `json:"checkins,omitempty" jsonschema:"description=Check-ins that the user posted, newest first. Only for the session user"`
+	Notifications *[]exportNotification    `json:"notifications,omitempty" jsonschema:"description=Notification feed, newest first. Only for the session user"`
 }
 
 type exportUser struct {
@@ -319,16 +322,17 @@ type exportRecognition struct {
 }
 
 type exportReview struct {
-	ID           int                   `json:"id" jsonschema:"description=Performance review ID"`
-	Title        string                `json:"title" jsonschema:"description=Name of the review cycle (e.g. 'Q1 2026 Performance Review')"`
-	Period       string                `json:"period" jsonschema:"description=Shortest calendar period that contains the start and end dates: a quarter (Q1 2026), a half year (H1 2026), a year (2026), or a range of years (2025-2026)"`
-	StartDate    string                `json:"start_date" jsonschema:"description=Review period start date (ISO 8601)"`
-	EndDate      string                `json:"end_date" jsonschema:"description=Review period end date (ISO 8601)"`
-	State        string                `json:"state" jsonschema:"description=Workflow state: employee_input, manager_input, skip_level_approval, admin_approval, completed, acknowledgment, or unknown_<n> for a value that 7Geese does not document"`
-	Position     string                `json:"position,omitempty" jsonschema:"description=The user's job title at the time of the review"`
-	Manager      string                `json:"manager,omitempty" jsonschema:"description=Full name of the user's manager for this review"`
-	Sections     []exportReviewSection `json:"sections,omitempty" jsonschema:"description=Review form sections containing questions and answers"`
-	PeerFeedback *exportPeerReport     `json:"peer_feedback,omitempty" jsonschema:"description=Curated peer feedback report if one was published for this cycle"`
+	ID                 int                   `json:"id" jsonschema:"description=Performance review ID"`
+	Title              string                `json:"title" jsonschema:"description=Name of the review cycle (e.g. 'Q1 2026 Performance Review')"`
+	Period             string                `json:"period" jsonschema:"description=Shortest calendar period that contains the start and end dates: a quarter (Q1 2026), a half year (H1 2026), a year (2026), or a range of years (2025-2026)"`
+	StartDate          string                `json:"start_date" jsonschema:"description=Review period start date (ISO 8601)"`
+	EndDate            string                `json:"end_date" jsonschema:"description=Review period end date (ISO 8601)"`
+	State              string                `json:"state" jsonschema:"description=Workflow state: employee_input, manager_input, skip_level_approval, admin_approval, completed, acknowledgment, or unknown_<n> for a value that 7Geese does not document"`
+	Position           string                `json:"position,omitempty" jsonschema:"description=The user's job title at the time of the review"`
+	Manager            string                `json:"manager,omitempty" jsonschema:"description=Full name of the user's manager for this review"`
+	Sections           []exportReviewSection `json:"sections,omitempty" jsonschema:"description=Review form sections containing questions and answers"`
+	PeerFeedback       *exportPeerReport     `json:"peer_feedback,omitempty" jsonschema:"description=Curated peer feedback report if one was published for this cycle"`
+	FeedbackRequestIDs []int                 `json:"feedback_request_ids,omitempty" jsonschema:"description=IDs of the feedback requests that are attached to this review. For the session user the requests and their responses are in the feedback section"`
 }
 
 type exportReviewSection struct {
@@ -346,6 +350,44 @@ type exportPeerReport struct {
 	Title     string               `json:"title" jsonschema:"description=Title of the peer feedback request"`
 	Published string               `json:"published,omitempty" jsonschema:"description=Date the curated report was published (ISO 8601)"`
 	Questions []exportPeerQuestion `json:"questions,omitempty" jsonschema:"description=Questions with anonymised peer answers"`
+}
+
+type exportFeedbackRequest struct {
+	ID                  int                      `json:"id" jsonschema:"description=Feedback request ID"`
+	Title               string                   `json:"title" jsonschema:"description=Title of the feedback request"`
+	Description         string                   `json:"description,omitempty" jsonschema:"description=Message of the feedback request"`
+	Status              string                   `json:"status" jsonschema:"description=Status that 7Geese gives for the recipient (for example DRAFT or IN_FLIGHT or COMPLETE)"`
+	RequestedBy         string                   `json:"requested_by,omitempty" jsonschema:"description=Full name of the person who made the request"`
+	Created             string                   `json:"created" jsonschema:"description=Time the request was made (ISO 8601)"`
+	Sent                string                   `json:"sent,omitempty" jsonschema:"description=Time the request was sent (ISO 8601)"`
+	Due                 string                   `json:"due,omitempty" jsonschema:"description=Due time of the responses (ISO 8601)"`
+	Asked               []string                 `json:"asked,omitempty" jsonschema:"description=Full names of the people who were asked for feedback. Only the names that 7Geese shows"`
+	AskedCount          int                      `json:"asked_count" jsonschema:"description=Number of people who were asked for feedback"`
+	ResponsesSubmitted  int                      `json:"responses_submitted" jsonschema:"description=Number of responses that 7Geese reports as submitted"`
+	AllResponsesVisible bool                     `json:"all_responses_visible" jsonschema:"description=False if 7Geese does not show all the responses to the session user. The responses list can then be incomplete"`
+	Responses           []exportFeedbackResponse `json:"responses" jsonschema:"description=Responses that 7Geese shows to the session user"`
+	CuratedReport       *exportPeerReport        `json:"curated_report,omitempty" jsonschema:"description=Curated report of the responses if one is available"`
+}
+
+type exportFeedbackResponse struct {
+	From      string                  `json:"from,omitempty" jsonschema:"description=Full name of the person who gave the feedback. Absent if 7Geese hides the name"`
+	Submitted string                  `json:"submitted,omitempty" jsonschema:"description=Time the response was submitted (ISO 8601). Absent if the response is not submitted"`
+	Answers   []exportFeedbackAnswer  `json:"answers" jsonschema:"description=Answers of this response"`
+	Comments  []exportFeedbackComment `json:"comments,omitempty" jsonschema:"description=Comments on the response"`
+}
+
+type exportFeedbackAnswer struct {
+	Question string                  `json:"question" jsonschema:"description=The question text"`
+	Hint     string                  `json:"hint,omitempty" jsonschema:"description=Guidance shown under the question"`
+	Answer   string                  `json:"answer" jsonschema:"description=The answer: text or a number or the selected options"`
+	Scale    string                  `json:"scale,omitempty" jsonschema:"description=Range of a number answer if the question defines one"`
+	Comments []exportFeedbackComment `json:"comments,omitempty" jsonschema:"description=Comments on the answer"`
+}
+
+type exportFeedbackComment struct {
+	Author  string `json:"author,omitempty" jsonschema:"description=Full name of the person who wrote the comment. Absent if 7Geese hides the name"`
+	Created string `json:"created" jsonschema:"description=Time the comment was written (ISO 8601)"`
+	Text    string `json:"text" jsonschema:"description=The comment text"`
 }
 
 type exportBadge struct {
@@ -559,6 +601,12 @@ func (e *exporter) profile(profileID int) (*exportProfile, error) {
 	if profileID != e.sessionUser {
 		return profile, nil
 	}
+
+	feedback, err := e.feedback(reviews)
+	if err != nil {
+		return nil, err
+	}
+	profile.Feedback = &feedback
 
 	meetings, err := e.meetings()
 	if err != nil {
@@ -1195,36 +1243,240 @@ func exportReviewFromSnapshot(snapshot gqlSnapshotFull, ownerID int) (*exportRev
 	}
 
 	if snapshot.PeerFeedbackRequest != nil && snapshot.PeerFeedbackRequest.CuratedReport != nil {
-		report := snapshot.PeerFeedbackRequest.CuratedReport
-		peer := &exportPeerReport{
-			Title:     snapshot.PeerFeedbackRequest.Title,
-			Published: report.PublishedDatetime,
+		peer, err := exportCuratedReport(snapshot.PeerFeedbackRequest.Title, snapshot.PeerFeedbackRequest.CuratedReport)
+		if err != nil {
+			return nil, fmt.Errorf("review %d: %w", snapshot.PK, err)
 		}
-		for _, questionEdge := range report.SortedCuratedQuestions.Edges {
-			var question struct {
-				Title string `json:"title"`
-			}
-			if len(questionEdge.Node.Question) > 0 {
-				if err := json.Unmarshal(questionEdge.Node.Question, &question); err != nil {
-					return nil, fmt.Errorf("review %d: decoding a peer feedback question: %w", snapshot.PK, err)
-				}
-			}
-			peerQuestion := exportPeerQuestion{Question: question.Title}
-			for _, answerEdge := range questionEdge.Node.Answers.Edges {
-				if text := stripHTMLTags(answerEdge.Node.Answer); text != "" {
-					peerQuestion.Answers = append(peerQuestion.Answers, text)
-				}
-			}
-			if peerQuestion.Question == "" && len(peerQuestion.Answers) == 0 {
-				continue
-			}
-			peer.Questions = append(peer.Questions, peerQuestion)
-		}
-		if len(peer.Questions) > 0 {
-			review.PeerFeedback = peer
-		}
+		review.PeerFeedback = peer
+	}
+	review.FeedbackRequestIDs, err = snapshot.feedbackRequestIDs()
+	if err != nil {
+		return nil, err
 	}
 	return review, nil
+}
+
+func exportCuratedReport(title string, report *gqlCuratedReport) (*exportPeerReport, error) {
+	peer := &exportPeerReport{Title: title, Published: report.PublishedDatetime}
+	for _, questionEdge := range report.SortedCuratedQuestions.Edges {
+		var question struct {
+			Title string `json:"title"`
+		}
+		if len(questionEdge.Node.Question) > 0 {
+			if err := json.Unmarshal(questionEdge.Node.Question, &question); err != nil {
+				return nil, fmt.Errorf("decoding a peer feedback question: %w", err)
+			}
+		}
+		peerQuestion := exportPeerQuestion{Question: question.Title}
+		for _, answerEdge := range questionEdge.Node.Answers.Edges {
+			if text := stripHTMLTags(answerEdge.Node.Answer); text != "" {
+				peerQuestion.Answers = append(peerQuestion.Answers, text)
+			}
+		}
+		if peerQuestion.Question == "" && len(peerQuestion.Answers) == 0 {
+			continue
+		}
+		peer.Questions = append(peer.Questions, peerQuestion)
+	}
+	if len(peer.Questions) == 0 {
+		return nil, nil
+	}
+	return peer, nil
+}
+
+func (e *exporter) feedback(reviews []exportReview) ([]exportFeedbackRequest, error) {
+	if err := e.use(sessionDataset(resourceFeedbackRequests)); err != nil {
+		return nil, err
+	}
+	rows, err := e.queryData(`SELECT data FROM feedback_request_view ORDER BY created DESC, id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("reading feedback requests: %w", err)
+	}
+	inReview := map[int]int{}
+	for _, review := range reviews {
+		for _, id := range review.FeedbackRequestIDs {
+			inReview[id] = review.ID
+		}
+	}
+	synced := map[int]bool{}
+	requests := make([]exportFeedbackRequest, 0, len(rows))
+	for _, raw := range rows {
+		var request gqlFeedbackRequest
+		if err := json.Unmarshal([]byte(raw), &request); err != nil {
+			return nil, fmt.Errorf("decoding a stored feedback request: %w", err)
+		}
+		synced[request.PK] = true
+		_, linked := inReview[request.PK]
+		keep, err := e.feedbackRequestInRange(request, linked)
+		if err != nil {
+			return nil, err
+		}
+		if !keep {
+			continue
+		}
+		exported, err := exportFeedbackRequestFromNode(request)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, *exported)
+	}
+	linkedIDs := make([]int, 0, len(inReview))
+	for id := range inReview {
+		linkedIDs = append(linkedIDs, id)
+	}
+	sort.Ints(linkedIDs)
+	for _, id := range linkedIDs {
+		if !synced[id] {
+			return nil, fmt.Errorf("review %d refers to feedback request %d, which is not in the synced feedback requests; run '7geese-cli sync'", inReview[id], id)
+		}
+	}
+	return requests, nil
+}
+
+func (e *exporter) feedbackRequestInRange(request gqlFeedbackRequest, inExportedReview bool) (bool, error) {
+	if e.since == nil || inExportedReview {
+		return true, nil
+	}
+	dates := []string{request.Created}
+	if request.SentDate != nil && *request.SentDate != "" {
+		dates = append(dates, *request.SentDate)
+	}
+	for _, edge := range request.Feedbacks.Edges {
+		if submitted := edge.Node.SubmittedTimestamp; submitted != nil && *submitted != "" {
+			dates = append(dates, *submitted)
+		}
+	}
+	for _, date := range dates {
+		keep, err := e.atOrAfterSince(fmt.Sprintf("feedback request %d date", request.PK), date)
+		if err != nil {
+			return false, err
+		}
+		if keep {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func exportFeedbackComments(comments gqlFeedbackComments) []exportFeedbackComment {
+	var exported []exportFeedbackComment
+	for _, edge := range comments.Edges {
+		comment := exportFeedbackComment{Created: edge.Node.Created, Text: stripHTMLTags(edge.Node.Comment)}
+		if edge.Node.Creator != nil {
+			comment.Author = edge.Node.Creator.FullName
+		}
+		exported = append(exported, comment)
+	}
+	return exported
+}
+
+func feedbackAnswerText(requestID int, answer gqlFeedbackAnswer) (string, error) {
+	switch answer.TypeName {
+	case "TextAnswerNode":
+		if answer.Text == nil {
+			return "", fmt.Errorf("feedback request %d has a text answer %d with no text", requestID, answer.PK)
+		}
+		return stripHTMLTags(*answer.Text), nil
+	case "RangeAnswerNode", "NpsAnswerNode", "LikertAnswerNode":
+		if answer.Number == nil {
+			return "", fmt.Errorf("feedback request %d has a number answer %d with no number", requestID, answer.PK)
+		}
+		return strconv.Itoa(*answer.Number), nil
+	case "MultiOptionAnswerNode":
+		if answer.Choices == nil {
+			return "", fmt.Errorf("feedback request %d has a choice answer %d with no choices", requestID, answer.PK)
+		}
+		options := make([]string, 0, len(answer.Choices.Edges))
+		for _, edge := range answer.Choices.Edges {
+			options = append(options, edge.Node.Option.Title)
+		}
+		return strings.Join(options, ", "), nil
+	default:
+		return "", fmt.Errorf("feedback request %d has an answer of the type %q that the export cannot read", requestID, answer.TypeName)
+	}
+}
+
+func feedbackAnswerScale(question gqlFeedbackQuestion) string {
+	if question.Start == nil || question.End == nil {
+		return ""
+	}
+	end := func(value int, text string) string {
+		if text == "" {
+			return strconv.Itoa(value)
+		}
+		return fmt.Sprintf("%d (%s)", value, text)
+	}
+	return end(*question.Start, question.StartText) + " to " + end(*question.End, question.EndText)
+}
+
+func exportFeedbackRequestFromNode(request gqlFeedbackRequest) (*exportFeedbackRequest, error) {
+	if request.NumResponsesSubmitted == nil || request.CanViewAllResponses == nil {
+		return nil, fmt.Errorf("stored feedback request %d does not say how many responses it has or if they are visible; run '7geese-cli sync'", request.PK)
+	}
+	exported := &exportFeedbackRequest{
+		ID:                  request.PK,
+		Title:               request.Title,
+		Description:         stripHTMLTags(request.Description),
+		Status:              request.StatusByRecipient,
+		Created:             request.Created,
+		Sent:                stringValue(request.SentDate),
+		Due:                 stringValue(request.DueDatetime),
+		AskedCount:          len(request.Responders.Edges),
+		ResponsesSubmitted:  *request.NumResponsesSubmitted,
+		AllResponsesVisible: *request.CanViewAllResponses,
+		Responses:           []exportFeedbackResponse{},
+	}
+	if request.Creator != nil {
+		exported.RequestedBy = request.Creator.FullName
+	}
+	for _, edge := range request.Responders.Edges {
+		if edge.Node.Profile != nil && edge.Node.Profile.FullName != "" {
+			exported.Asked = append(exported.Asked, edge.Node.Profile.FullName)
+		}
+	}
+	for _, feedbackEdge := range request.Feedbacks.Edges {
+		feedback := feedbackEdge.Node
+		response := exportFeedbackResponse{
+			Submitted: stringValue(feedback.SubmittedTimestamp),
+			Answers:   []exportFeedbackAnswer{},
+			Comments:  exportFeedbackComments(feedback.Comments),
+		}
+		if feedback.Responder != nil && feedback.Responder.Profile != nil {
+			response.From = feedback.Responder.Profile.FullName
+		}
+		for _, answerEdge := range feedback.Answers.Edges {
+			answer := answerEdge.Node
+			if answer.Question == nil {
+				return nil, fmt.Errorf("feedback request %d has an answer %d with no question", request.PK, answer.PK)
+			}
+			text, err := feedbackAnswerText(request.PK, answer)
+			if err != nil {
+				return nil, err
+			}
+			if text == "" {
+				continue
+			}
+			exportedAnswer := exportFeedbackAnswer{
+				Question: answer.Question.Title,
+				Hint:     stripHTMLTags(answer.Question.Description),
+				Answer:   text,
+				Comments: exportFeedbackComments(answer.Comments),
+			}
+			if answer.Number != nil {
+				exportedAnswer.Scale = feedbackAnswerScale(*answer.Question)
+			}
+			response.Answers = append(response.Answers, exportedAnswer)
+		}
+		exported.Responses = append(exported.Responses, response)
+	}
+	if request.CuratedReport != nil {
+		report, err := exportCuratedReport(request.Title, request.CuratedReport)
+		if err != nil {
+			return nil, fmt.Errorf("feedback request %d: %w", request.PK, err)
+		}
+		exported.CuratedReport = report
+	}
+	return exported, nil
 }
 
 func reviewPeriod(startDate, endDate string) (string, error) {

@@ -24,10 +24,22 @@ type gqlSnapshotSummary struct {
 	} `json:"snapshotGroup"`
 }
 
+type gqlLinkedFeedbackRequests struct {
+	PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+	Edges    []struct {
+		Node struct {
+			PK    int    `json:"pk"`
+			Title string `json:"title"`
+		} `json:"node"`
+	} `json:"edges"`
+}
+
 type gqlSnapshotItem struct {
-	Type  string `json:"type"`
-	PK    int    `json:"pk"`
-	Title string `json:"title"`
+	Type                       string                     `json:"type"`
+	PK                         int                        `json:"pk"`
+	Title                      string                     `json:"title"`
+	FeedbackRequests           *gqlLinkedFeedbackRequests `json:"feedbackRequests,omitempty"`
+	ThreesixtyFeedbackRequests *gqlLinkedFeedbackRequests `json:"threesixtyFeedbackRequests,omitempty"`
 }
 
 type gqlSnapshotSection struct {
@@ -92,29 +104,31 @@ type gqlSnapshotFull struct {
 	PeerFeedbackRequest *gqlPeerFeedbackRequest `json:"peerFeedbackRequest"`
 }
 
+type gqlCuratedReport struct {
+	PublishedDatetime      string `json:"publishedDatetime"`
+	SortedCuratedQuestions struct {
+		PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+		Edges    []struct {
+			Node struct {
+				Comment  string          `json:"comment"`
+				Question json.RawMessage `json:"question"`
+				Answers  struct {
+					PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
+					Edges    []struct {
+						Node struct {
+							Answer string `json:"answer"`
+						} `json:"node"`
+					} `json:"edges"`
+				} `json:"answers"`
+			} `json:"node"`
+		} `json:"edges"`
+	} `json:"sortedCuratedQuestions"`
+}
+
 type gqlPeerFeedbackRequest struct {
-	PK            int    `json:"pk"`
-	Title         string `json:"title"`
-	CuratedReport *struct {
-		PublishedDatetime      string `json:"publishedDatetime"`
-		SortedCuratedQuestions struct {
-			PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
-			Edges    []struct {
-				Node struct {
-					Comment  string          `json:"comment"`
-					Question json.RawMessage `json:"question"`
-					Answers  struct {
-						PageInfo *gqlPageInfo `json:"pageInfo,omitempty"`
-						Edges    []struct {
-							Node struct {
-								Answer string `json:"answer"`
-							} `json:"node"`
-						} `json:"edges"`
-					} `json:"answers"`
-				} `json:"node"`
-			} `json:"edges"`
-		} `json:"sortedCuratedQuestions"`
-	} `json:"curatedReport"`
+	PK            int               `json:"pk"`
+	Title         string            `json:"title"`
+	CuratedReport *gqlCuratedReport `json:"curatedReport"`
 }
 
 const listSnapshotsQuery = `
@@ -543,7 +557,11 @@ fragment snapshotSection on SectionNode {
           type
           canAnswer
           ordinal
-          feedbackRequests(first: 30) {
+          feedbackRequests(first: 200) {
+            pageInfo {
+              hasNextPage
+              __typename
+            }
             edges {
               node {
                 pk
@@ -570,7 +588,11 @@ fragment snapshotSection on SectionNode {
             }
             __typename
           }
-          threesixtyFeedbackRequests(first: 30) {
+          threesixtyFeedbackRequests(first: 200) {
+            pageInfo {
+              hasNextPage
+              __typename
+            }
             edges {
               node {
                 pk
@@ -1339,6 +1361,17 @@ func checkSnapshotComplete(snapshot *gqlSnapshotFull) error {
 		if err := closeSnapshotPage(snapshot.PK, "section items", &sections[i].Node.Items.PageInfo); err != nil {
 			return err
 		}
+		items := sections[i].Node.Items.Edges
+		for j := range items {
+			for _, linked := range []*gqlLinkedFeedbackRequests{items[j].Node.FeedbackRequests, items[j].Node.ThreesixtyFeedbackRequests} {
+				if linked == nil {
+					continue
+				}
+				if err := closeSnapshotPage(snapshot.PK, "feedback requests", &linked.PageInfo); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	if err := closeSnapshotPage(snapshot.PK, "answers", &snapshot.Answers.PageInfo); err != nil {
 		return err
@@ -1346,16 +1379,47 @@ func checkSnapshotComplete(snapshot *gqlSnapshotFull) error {
 	if snapshot.PeerFeedbackRequest == nil || snapshot.PeerFeedbackRequest.CuratedReport == nil {
 		return nil
 	}
-	questions := &snapshot.PeerFeedbackRequest.CuratedReport.SortedCuratedQuestions
-	if err := closeSnapshotPage(snapshot.PK, "peer feedback questions", &questions.PageInfo); err != nil {
+	return closeCuratedReportPages(snapshot.PeerFeedbackRequest.CuratedReport, func(what string, pageInfo **gqlPageInfo) error {
+		return closeSnapshotPage(snapshot.PK, what, pageInfo)
+	})
+}
+
+func closeCuratedReportPages(report *gqlCuratedReport, closePage func(what string, pageInfo **gqlPageInfo) error) error {
+	questions := &report.SortedCuratedQuestions
+	if err := closePage("peer feedback questions", &questions.PageInfo); err != nil {
 		return err
 	}
 	for i := range questions.Edges {
-		if err := closeSnapshotPage(snapshot.PK, "peer feedback answers", &questions.Edges[i].Node.Answers.PageInfo); err != nil {
+		if err := closePage("peer feedback answers", &questions.Edges[i].Node.Answers.PageInfo); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (snapshot *gqlSnapshotFull) feedbackRequestIDs() ([]int, error) {
+	seen := map[int]bool{}
+	for _, sectionEdge := range snapshot.SnapshotGroup.Sections.Edges {
+		for _, itemEdge := range sectionEdge.Node.Items.Edges {
+			for _, linked := range []*gqlLinkedFeedbackRequests{itemEdge.Node.FeedbackRequests, itemEdge.Node.ThreesixtyFeedbackRequests} {
+				if linked == nil {
+					continue
+				}
+				for _, requestEdge := range linked.Edges {
+					if requestEdge.Node.PK <= 0 {
+						return nil, fmt.Errorf("review %d has a feedback request with no pk", snapshot.PK)
+					}
+					seen[requestEdge.Node.PK] = true
+				}
+			}
+		}
+	}
+	ids := make([]int, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	return ids, nil
 }
 
 func fetchSnapshot(api *syncAPI, snapshotID int) (*gqlSnapshotFull, error) {
@@ -1380,26 +1444,32 @@ func fetchSnapshot(api *syncAPI, snapshotID int) (*gqlSnapshotFull, error) {
 	return data.Snapshot, nil
 }
 
-func fetchUserSnapshots(api *syncAPI, profileID int) ([]store.Record, error) {
+func fetchUserSnapshots(api *syncAPI, profileID int) ([]store.Record, []int, error) {
 	ids, err := fetchSnapshotIDs(api, profileID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	snapshots, err := fetchEach(ids, func(id int) (*gqlSnapshotFull, error) {
 		return fetchSnapshot(api, id)
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	records := make([]store.Record, 0, len(snapshots))
+	var feedbackRequestIDs []int
 	for i, snapshot := range snapshots {
+		linked, err := snapshot.feedbackRequestIDs()
+		if err != nil {
+			return nil, nil, err
+		}
+		feedbackRequestIDs = append(feedbackRequestIDs, linked...)
 		data, err := json.Marshal(snapshot)
 		if err != nil {
-			return nil, fmt.Errorf("encoding review %d: %w", ids[i], err)
+			return nil, nil, fmt.Errorf("encoding review %d: %w", ids[i], err)
 		}
 		records = append(records, store.Record{ID: strconv.Itoa(ids[i]), Data: data})
 	}
-	return records, nil
+	return records, feedbackRequestIDs, nil
 }
 
 func snapshotStateName(state int) string {
