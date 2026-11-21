@@ -113,6 +113,7 @@ var viewDefinitions = []viewDefinition{
 		SELECT
 			CAST(json_extract(data,'$.pk') AS INTEGER) AS id,
 			json_extract(data,'$.title') AS title,
+			json_extract(data,'$.notVisible') IS NOT 1 AS visible,
 			json_extract(data,'$.statusByRecipient') AS status,
 			json_extract(data,'$.created') AS created,
 			json_extract(data,'$.sentDate') AS sent_date,

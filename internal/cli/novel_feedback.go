@@ -82,6 +82,7 @@ type gqlFeedback struct {
 type gqlFeedbackRequest struct {
 	PK                        int              `json:"pk"`
 	Title                     string           `json:"title"`
+	NotVisible                bool             `json:"notVisible,omitempty"`
 	Description               string           `json:"description"`
 	Type                      json.RawMessage  `json:"type"`
 	State                     json.RawMessage  `json:"state"`
@@ -533,7 +534,7 @@ func fetchFeedbackRequest(api *syncAPI, requestID int) (*gqlFeedbackRequest, err
 		return nil, err
 	}
 	if data.FeedbackRequest == nil {
-		return nil, fmt.Errorf("feedback request %d is in the feedback list or in a review but its content is not visible", requestID)
+		return nil, nil
 	}
 	if data.FeedbackRequest.PK != requestID {
 		return nil, fmt.Errorf("feedback request %d was requested but feedback request %d was returned", requestID, data.FeedbackRequest.PK)
@@ -544,36 +545,46 @@ func fetchFeedbackRequest(api *syncAPI, requestID int) (*gqlFeedbackRequest, err
 	return data.FeedbackRequest, nil
 }
 
-func fetchFeedbackRequests(api *syncAPI, profileID int, reviewRequestIDs []int) ([]store.Record, error) {
-	listed, err := fetchFeedbackRequestIDs(api, profileID)
+func fetchFeedbackRequests(api *syncAPI, profileID int, reviewRequests map[int]string) ([]store.Record, []int, error) {
+	listedIDs, err := fetchFeedbackRequestIDs(api, profileID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	wanted := map[int]bool{}
-	for _, id := range listed {
-		wanted[id] = true
+	listed := map[int]bool{}
+	ids := append([]int{}, listedIDs...)
+	for _, id := range listedIDs {
+		listed[id] = true
 	}
-	for _, id := range reviewRequestIDs {
-		wanted[id] = true
-	}
-	ids := make([]int, 0, len(wanted))
-	for id := range wanted {
-		ids = append(ids, id)
+	for id := range reviewRequests {
+		if !listed[id] {
+			ids = append(ids, id)
+		}
 	}
 	sort.Ints(ids)
 	requests, err := fetchEach(ids, func(id int) (*gqlFeedbackRequest, error) {
-		return fetchFeedbackRequest(api, id)
+		request, err := fetchFeedbackRequest(api, id)
+		if err != nil || request != nil {
+			return request, err
+		}
+		if listed[id] {
+			return nil, fmt.Errorf("feedback request %d is in the feedback list but its content is not visible", id)
+		}
+		return &gqlFeedbackRequest{PK: id, Title: reviewRequests[id], NotVisible: true}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	records := make([]store.Record, 0, len(requests))
+	var notVisible []int
 	for i, request := range requests {
+		if request.NotVisible {
+			notVisible = append(notVisible, ids[i])
+		}
 		data, err := json.Marshal(request)
 		if err != nil {
-			return nil, fmt.Errorf("encoding feedback request %d: %w", ids[i], err)
+			return nil, nil, fmt.Errorf("encoding feedback request %d: %w", ids[i], err)
 		}
 		records = append(records, store.Record{ID: strconv.Itoa(ids[i]), Data: data})
 	}
-	return records, nil
+	return records, notVisible, nil
 }

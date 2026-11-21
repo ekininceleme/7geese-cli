@@ -29,9 +29,13 @@ objectives and reviews of your direct reports are included.
 If a dataset fails, its earlier local data stays and the exit code is not 0.
 Run the command again to complete the sync.
 
+If a review refers to a feedback request that 7Geese does not show to you, the
+request is stored as not visible, with its ID and title only, and the sync
+gives a warning.
+
 Output: one JSON event for each dataset on stdout (sync_start, sync_complete,
-sync_error, sync_purge) and a final sync_summary. Use --human-friendly for
-text output on stderr.`,
+sync_error, sync_warning, sync_purge) and a final sync_summary. Use
+--human-friendly for text output on stderr.`,
 		Example: `  7geese-cli sync
   7geese-cli sync --human-friendly
   7geese-cli sync --db /path/to/data.db`,

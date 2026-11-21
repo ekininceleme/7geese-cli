@@ -69,7 +69,7 @@ The output is one JSON event for each dataset on stdout and a final `sync_summar
 ```
 
 - `me` has the sections `profile`, `objectives`, `reviews`, `feedback`, `oneonones`, `recognitions`, `checkins` and `notifications`.
-- `feedback` has the feedback requests about the user with the responses. Each review has `feedback_request_ids` for its attached requests.
+- `feedback` has the feedback requests about the user with the responses. Each review has `feedback_request_ids` for its attached requests. A request with `"visible": false` is attached to a review but 7Geese does not show it to the user: only `id` and `title` are available, and the sync gives a `sync_warning` event for it.
 - `direct_reports` has the profile, the objectives and the reviews of each direct report.
 - `synced_at` shows the age of the local data. Run `sync` to refresh the data.
 - `--user` works only for direct reports. The sections `feedback`, `oneonones`, `recognitions`, `checkins` and `notifications` are available only for the session user.

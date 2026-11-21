@@ -89,6 +89,7 @@ type fakeFeedbackRequest struct {
 
 type fakeFeedbackEntry struct {
 	Listed    bool
+	Hidden    bool
 	Recipient int
 	Data      map[string]any
 }
@@ -857,7 +858,7 @@ func (f *fake7Geese) graphQL(w http.ResponseWriter, r *http.Request) {
 		pk := intVar("pk")
 		var found any
 		for _, entry := range f.feedback {
-			if entry.Data["pk"] == pk {
+			if entry.Data["pk"] == pk && !entry.Hidden {
 				found = entry.Data
 			}
 		}
@@ -900,14 +901,15 @@ func (f *fake7Geese) dataRequestCount() int {
 }
 
 type recordingReporter struct {
-	mu     sync.Mutex
-	done   map[string]int
-	failed map[string]string
-	purged []string
+	mu       sync.Mutex
+	done     map[string]int
+	failed   map[string]string
+	warnings map[string][]string
+	purged   []string
 }
 
 func newRecordingReporter() *recordingReporter {
-	return &recordingReporter{done: map[string]int{}, failed: map[string]string{}}
+	return &recordingReporter{done: map[string]int{}, failed: map[string]string{}, warnings: map[string][]string{}}
 }
 
 func (r *recordingReporter) Start(key store.DatasetKey) {}
@@ -922,6 +924,12 @@ func (r *recordingReporter) Failed(key store.DatasetKey, err error, elapsed time
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.failed[key.String()] = err.Error()
+}
+
+func (r *recordingReporter) Warning(key store.DatasetKey, message string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.warnings[key.String()] = append(r.warnings[key.String()], message)
 }
 
 func (r *recordingReporter) Purged(key store.DatasetKey) {

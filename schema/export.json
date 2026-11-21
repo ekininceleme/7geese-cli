@@ -149,6 +149,10 @@
           "type": "string",
           "description": "Title of the feedback request"
         },
+        "visible": {
+          "type": "boolean",
+          "description": "False if a review refers to this request but 7Geese does not show the request to the session user. Only the ID and the title are then available"
+        },
         "description": {
           "type": "string",
           "description": "Message of the feedback request"
@@ -209,10 +213,7 @@
       "required": [
         "id",
         "title",
-        "status",
-        "created",
-        "asked_count",
-        "responses_submitted",
+        "visible",
         "all_responses_visible",
         "responses"
       ]

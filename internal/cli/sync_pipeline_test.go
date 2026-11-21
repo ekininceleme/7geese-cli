@@ -752,6 +752,59 @@ func TestRunSync_StoresFeedbackOfTheListAndOfTheReviews(t *testing.T) {
 	if count := x.fake.requestCount("graphql:listFeedbackRequests"); count != 1 {
 		t.Errorf("%d feedback list requests were sent, want 1 for the session user only", count)
 	}
+	if len(x.reporter.warnings) != 0 {
+		t.Errorf("warnings = %v, want none when all the feedback requests are visible", x.reporter.warnings)
+	}
+}
+
+func TestRunSync_StoresAHiddenFeedbackRequestOfAReviewAsNotVisible(t *testing.T) {
+	x := newSyncFixture(t)
+	x.fake.change(func() { x.fake.feedback[2].Hidden = true })
+	x.mustSync(t)
+
+	key := sessionDataset(resourceFeedbackRequests)
+	if ids := x.ids(t, key); strings.Join(ids, ",") != "81,82,83" {
+		t.Fatalf("feedback requests = %v, want 81, 82 and the hidden 83", ids)
+	}
+	raw, found, err := x.db.GetRecord(key, "83")
+	if err != nil || !found {
+		t.Fatalf("feedback request 83: found %v, err %v", found, err)
+	}
+	var hidden gqlFeedbackRequest
+	if err := json.Unmarshal(raw, &hidden); err != nil {
+		t.Fatalf("decoding feedback request 83: %v", err)
+	}
+	if !hidden.NotVisible || hidden.PK != 83 || hidden.Title != "Feedback 83" || hidden.NumResponsesSubmitted != nil || hidden.CanViewAllResponses != nil {
+		t.Errorf("feedback request 83 = %s, want a not-visible record with the title of the review", raw)
+	}
+	raw, found, err = x.db.GetRecord(key, "81")
+	if err != nil || !found || strings.Contains(string(raw), "notVisible") {
+		t.Errorf("feedback request 81 (found %v, err %v) = %s, want a visible record", found, err, raw)
+	}
+	warnings := x.reporter.warnings[resourceFeedbackRequests]
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "does not show 1 of the feedback requests") || !strings.Contains(warnings[0], "IDs: 83)") {
+		t.Errorf("warnings = %v, want one warning that names request 83", warnings)
+	}
+	if len(x.reporter.failed) != 0 {
+		t.Errorf("failed datasets = %v, want none", x.reporter.failed)
+	}
+}
+
+func TestSyncReporters_ShowWarnings(t *testing.T) {
+	key := sessionDataset(resourceFeedbackRequests)
+	var events, text bytes.Buffer
+	(&jsonSyncReporter{out: &events}).Warning(key, "request 83 is not visible")
+	var event map[string]any
+	if err := json.Unmarshal(events.Bytes(), &event); err != nil {
+		t.Fatalf("decoding %q: %v", events.String(), err)
+	}
+	if event["event"] != "sync_warning" || event["resource"] != resourceFeedbackRequests || event["message"] != "request 83 is not visible" {
+		t.Errorf("JSON event = %s", events.String())
+	}
+	(&humanSyncReporter{out: &text}).Warning(key, "request 83 is not visible")
+	if got := text.String(); got != "  feedback_requests: warning: request 83 is not visible\n" {
+		t.Errorf("text line = %q", got)
+	}
 }
 
 func TestRunSync_FeedbackThatIsNotCompleteFails(t *testing.T) {
@@ -783,7 +836,7 @@ func TestRunSync_FeedbackThatIsNotCompleteFails(t *testing.T) {
 		}, "feedback request 81 has more answers than one request returns"},
 		{"no page information", func(f *fake7Geese) { delete(responses(f), "pageInfo") }, "feedback request 81 has no page information for its responses"},
 		{"no response count", func(f *fake7Geese) { entry(f, 81).Data["numResponsesSubmitted"] = nil }, "feedback request 81 does not say how many responses it has"},
-		{"request of a review that is not visible", func(f *fake7Geese) { f.feedback = f.feedback[:2] }, "feedback request 83 is in the feedback list or in a review but its content is not visible"},
+		{"request of the list that is not visible", func(f *fake7Geese) { entry(f, 82).Hidden = true }, "feedback request 82 is in the feedback list but its content is not visible"},
 		{"list of a different recipient", func(f *fake7Geese) { entry(f, 82).Data["recipient"] = fakeGQLUser(fakeColleague, "Devon Ellis") }, "the list does not obey the recipient filter"},
 	}
 	for _, c := range cases {

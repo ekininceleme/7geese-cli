@@ -1397,8 +1397,8 @@ func closeCuratedReportPages(report *gqlCuratedReport, closePage func(what strin
 	return nil
 }
 
-func (snapshot *gqlSnapshotFull) feedbackRequestIDs() ([]int, error) {
-	seen := map[int]bool{}
+func (snapshot *gqlSnapshotFull) feedbackRequestTitles() (map[int]string, error) {
+	titles := map[int]string{}
 	for _, sectionEdge := range snapshot.SnapshotGroup.Sections.Edges {
 		for _, itemEdge := range sectionEdge.Node.Items.Edges {
 			for _, linked := range []*gqlLinkedFeedbackRequests{itemEdge.Node.FeedbackRequests, itemEdge.Node.ThreesixtyFeedbackRequests} {
@@ -1409,13 +1409,21 @@ func (snapshot *gqlSnapshotFull) feedbackRequestIDs() ([]int, error) {
 					if requestEdge.Node.PK <= 0 {
 						return nil, fmt.Errorf("review %d has a feedback request with no pk", snapshot.PK)
 					}
-					seen[requestEdge.Node.PK] = true
+					titles[requestEdge.Node.PK] = requestEdge.Node.Title
 				}
 			}
 		}
 	}
-	ids := make([]int, 0, len(seen))
-	for id := range seen {
+	return titles, nil
+}
+
+func (snapshot *gqlSnapshotFull) feedbackRequestIDs() ([]int, error) {
+	titles, err := snapshot.feedbackRequestTitles()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int, 0, len(titles))
+	for id := range titles {
 		ids = append(ids, id)
 	}
 	sort.Ints(ids)
@@ -1444,7 +1452,7 @@ func fetchSnapshot(api *syncAPI, snapshotID int) (*gqlSnapshotFull, error) {
 	return data.Snapshot, nil
 }
 
-func fetchUserSnapshots(api *syncAPI, profileID int) ([]store.Record, []int, error) {
+func fetchUserSnapshots(api *syncAPI, profileID int) ([]store.Record, map[int]string, error) {
 	ids, err := fetchSnapshotIDs(api, profileID)
 	if err != nil {
 		return nil, nil, err
@@ -1456,20 +1464,22 @@ func fetchUserSnapshots(api *syncAPI, profileID int) ([]store.Record, []int, err
 		return nil, nil, err
 	}
 	records := make([]store.Record, 0, len(snapshots))
-	var feedbackRequestIDs []int
+	feedbackRequests := map[int]string{}
 	for i, snapshot := range snapshots {
-		linked, err := snapshot.feedbackRequestIDs()
+		linked, err := snapshot.feedbackRequestTitles()
 		if err != nil {
 			return nil, nil, err
 		}
-		feedbackRequestIDs = append(feedbackRequestIDs, linked...)
+		for id, title := range linked {
+			feedbackRequests[id] = title
+		}
 		data, err := json.Marshal(snapshot)
 		if err != nil {
 			return nil, nil, fmt.Errorf("encoding review %d: %w", ids[i], err)
 		}
 		records = append(records, store.Record{ID: strconv.Itoa(ids[i]), Data: data})
 	}
-	return records, feedbackRequestIDs, nil
+	return records, feedbackRequests, nil
 }
 
 func snapshotStateName(state int) string {

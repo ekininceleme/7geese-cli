@@ -675,8 +675,8 @@ func TestExport_Feedback(t *testing.T) {
 	midYear := feedback[0]
 	if midYear.Title != "Mid-Year feedback" || midYear.Description != "Please give feedback" || midYear.Status != "COMPLETE" ||
 		midYear.RequestedBy != "Blake Chen" || midYear.Created != "2026-05-18T10:00:00.123456+00:00" || midYear.Sent != midYear.Created || midYear.Due != "" ||
-		strings.Join(midYear.Asked, ",") != "Devon Ellis,Blake Chen" || midYear.AskedCount != 2 ||
-		midYear.ResponsesSubmitted != 2 || !midYear.AllResponsesVisible || midYear.CuratedReport != nil {
+		strings.Join(midYear.Asked, ",") != "Devon Ellis,Blake Chen" || midYear.AskedCount == nil || *midYear.AskedCount != 2 ||
+		midYear.ResponsesSubmitted == nil || *midYear.ResponsesSubmitted != 2 || !midYear.Visible || !midYear.AllResponsesVisible || midYear.CuratedReport != nil {
 		t.Errorf("feedback request 81 = %+v", midYear)
 	}
 	if len(midYear.Responses) != 2 {
@@ -702,7 +702,8 @@ func TestExport_Feedback(t *testing.T) {
 	if choices := anonymous.Answers[1]; choices.Answer != "Speed, Quality" || choices.Scale != "" {
 		t.Errorf("choice answer = %+v", choices)
 	}
-	if draft := feedback[2]; draft.Status != "DRAFT" || draft.AllResponsesVisible || draft.Responses == nil || len(draft.Responses) != 0 {
+	if draft := feedback[2]; draft.Status != "DRAFT" || !draft.Visible || draft.AskedCount == nil || *draft.AskedCount != 0 || draft.ResponsesSubmitted == nil || *draft.ResponsesSubmitted != 0 ||
+		draft.AllResponsesVisible || draft.Responses == nil || len(draft.Responses) != 0 {
 		t.Errorf("draft feedback request = %+v, want an empty response list", draft)
 	}
 
@@ -750,6 +751,50 @@ func TestExport_FeedbackSince(t *testing.T) {
 	}
 	if !strings.Contains(string(encoded), `"feedback":[]`) {
 		t.Errorf("an empty feedback list is not encoded as []: %s", encoded)
+	}
+}
+
+func TestExport_FeedbackThatIsNotVisible(t *testing.T) {
+	x := newSyncFixture(t)
+	x.fake.change(func() { x.fake.feedback[2].Hidden = true })
+	x.mustSync(t)
+
+	out := mustExport(t, x, "", "")
+	feedback := *out.Me.Feedback
+	if order := feedbackIDs(feedback); order != "81,82,83" {
+		t.Fatalf("feedback = %s, want 81,82,83", order)
+	}
+	encoded, err := json.Marshal(feedback[2])
+	if err != nil {
+		t.Fatalf("encoding: %v", err)
+	}
+	if want := `{"id":83,"title":"Feedback 83","visible":false,"all_responses_visible":false,"responses":[]}`; string(encoded) != want {
+		t.Errorf("hidden feedback request = %s, want %s", encoded, want)
+	}
+	visible, err := json.Marshal(feedback[0])
+	if err != nil {
+		t.Fatalf("encoding: %v", err)
+	}
+	for _, field := range []string{`"visible":true`, `"asked_count":2`, `"responses_submitted":2`} {
+		if !strings.Contains(string(visible), field) {
+			t.Errorf("feedback request 81 has no %s: %s", field, visible)
+		}
+	}
+	for _, review := range out.Me.Reviews {
+		if review.ID == 71 && fmt.Sprint(review.FeedbackRequestIDs) != "[83]" {
+			t.Errorf("feedback requests of review 71 = %v, want [83]", review.FeedbackRequestIDs)
+		}
+	}
+
+	cases := []struct{ since, want, why string }{
+		{"2026-02-02", "81,83", "83 is attached to review 71, which is in the export"},
+		{"2026-04-01", "81", "83 has no dates and review 71 is not in the export"},
+		{"2026-07-01", "", "no request is in the period"},
+	}
+	for _, c := range cases {
+		if got := feedbackIDs(*mustExport(t, x, "", c.since).Me.Feedback); got != c.want {
+			t.Errorf("--since %s: feedback = %q, want %q (%s)", c.since, got, c.want, c.why)
+		}
 	}
 }
 
@@ -826,7 +871,7 @@ func TestExportFeedbackRequestFromNode_Failures(t *testing.T) {
 		report.Questions[0].Question != "Strengths?" || strings.Join(report.Questions[0].Answers, "|") != "Clear" {
 		t.Errorf("curated report = %+v", report)
 	}
-	if exported.AllResponsesVisible || exported.ResponsesSubmitted != 2 || len(exported.Responses) != 0 {
+	if exported.AllResponsesVisible || exported.ResponsesSubmitted == nil || *exported.ResponsesSubmitted != 2 || len(exported.Responses) != 0 {
 		t.Errorf("request with a curated report = %+v", exported)
 	}
 }

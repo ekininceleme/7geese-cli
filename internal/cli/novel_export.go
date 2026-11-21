@@ -355,15 +355,16 @@ type exportPeerReport struct {
 type exportFeedbackRequest struct {
 	ID                  int                      `json:"id" jsonschema:"description=Feedback request ID"`
 	Title               string                   `json:"title" jsonschema:"description=Title of the feedback request"`
+	Visible             bool                     `json:"visible" jsonschema:"description=False if a review refers to this request but 7Geese does not show the request to the session user. Only the ID and the title are then available"`
 	Description         string                   `json:"description,omitempty" jsonschema:"description=Message of the feedback request"`
-	Status              string                   `json:"status" jsonschema:"description=Status that 7Geese gives for the recipient (for example DRAFT or IN_FLIGHT or COMPLETE)"`
+	Status              string                   `json:"status,omitempty" jsonschema:"description=Status that 7Geese gives for the recipient (for example DRAFT or IN_FLIGHT or COMPLETE)"`
 	RequestedBy         string                   `json:"requested_by,omitempty" jsonschema:"description=Full name of the person who made the request"`
-	Created             string                   `json:"created" jsonschema:"description=Time the request was made (ISO 8601)"`
+	Created             string                   `json:"created,omitempty" jsonschema:"description=Time the request was made (ISO 8601)"`
 	Sent                string                   `json:"sent,omitempty" jsonschema:"description=Time the request was sent (ISO 8601)"`
 	Due                 string                   `json:"due,omitempty" jsonschema:"description=Due time of the responses (ISO 8601)"`
 	Asked               []string                 `json:"asked,omitempty" jsonschema:"description=Full names of the people who were asked for feedback. Only the names that 7Geese shows"`
-	AskedCount          int                      `json:"asked_count" jsonschema:"description=Number of people who were asked for feedback"`
-	ResponsesSubmitted  int                      `json:"responses_submitted" jsonschema:"description=Number of responses that 7Geese reports as submitted"`
+	AskedCount          *int                     `json:"asked_count,omitempty" jsonschema:"description=Number of people who were asked for feedback"`
+	ResponsesSubmitted  *int                     `json:"responses_submitted,omitempty" jsonschema:"description=Number of responses that 7Geese reports as submitted"`
 	AllResponsesVisible bool                     `json:"all_responses_visible" jsonschema:"description=False if 7Geese does not show all the responses to the session user. The responses list can then be incomplete"`
 	Responses           []exportFeedbackResponse `json:"responses" jsonschema:"description=Responses that 7Geese shows to the session user"`
 	CuratedReport       *exportPeerReport        `json:"curated_report,omitempty" jsonschema:"description=Curated report of the responses if one is available"`
@@ -1337,6 +1338,9 @@ func (e *exporter) feedbackRequestInRange(request gqlFeedbackRequest, inExported
 	if e.since == nil || inExportedReview {
 		return true, nil
 	}
+	if request.NotVisible {
+		return false, nil
+	}
 	dates := []string{request.Created}
 	if request.SentDate != nil && *request.SentDate != "" {
 		dates = append(dates, *request.SentDate)
@@ -1410,19 +1414,24 @@ func feedbackAnswerScale(question gqlFeedbackQuestion) string {
 }
 
 func exportFeedbackRequestFromNode(request gqlFeedbackRequest) (*exportFeedbackRequest, error) {
+	if request.NotVisible {
+		return &exportFeedbackRequest{ID: request.PK, Title: request.Title, Responses: []exportFeedbackResponse{}}, nil
+	}
 	if request.NumResponsesSubmitted == nil || request.CanViewAllResponses == nil {
 		return nil, fmt.Errorf("stored feedback request %d does not say how many responses it has or if they are visible; run '7geese-cli sync'", request.PK)
 	}
+	askedCount := len(request.Responders.Edges)
 	exported := &exportFeedbackRequest{
 		ID:                  request.PK,
 		Title:               request.Title,
+		Visible:             true,
 		Description:         stripHTMLTags(request.Description),
 		Status:              request.StatusByRecipient,
 		Created:             request.Created,
 		Sent:                stringValue(request.SentDate),
 		Due:                 stringValue(request.DueDatetime),
-		AskedCount:          len(request.Responders.Edges),
-		ResponsesSubmitted:  *request.NumResponsesSubmitted,
+		AskedCount:          &askedCount,
+		ResponsesSubmitted:  request.NumResponsesSubmitted,
 		AllResponsesVisible: *request.CanViewAllResponses,
 		Responses:           []exportFeedbackResponse{},
 	}

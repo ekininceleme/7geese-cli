@@ -68,6 +68,7 @@ type syncReporter interface {
 	Start(key store.DatasetKey)
 	Done(key store.DatasetKey, count int, elapsed time.Duration)
 	Failed(key store.DatasetKey, err error, elapsed time.Duration)
+	Warning(key store.DatasetKey, message string)
 	Purged(key store.DatasetKey)
 	Summary(records, succeeded, failed int, elapsed time.Duration)
 }
@@ -106,6 +107,10 @@ func (r *jsonSyncReporter) Failed(key store.DatasetKey, err error, elapsed time.
 	r.emit("sync_error", &key, map[string]any{"message": err.Error(), "duration_ms": elapsed.Milliseconds()})
 }
 
+func (r *jsonSyncReporter) Warning(key store.DatasetKey, message string) {
+	r.emit("sync_warning", &key, map[string]any{"message": message})
+}
+
 func (r *jsonSyncReporter) Purged(key store.DatasetKey) {
 	r.emit("sync_purge", &key, map[string]any{})
 }
@@ -139,6 +144,10 @@ func (r *humanSyncReporter) Done(key store.DatasetKey, count int, elapsed time.D
 
 func (r *humanSyncReporter) Failed(key store.DatasetKey, err error, elapsed time.Duration) {
 	r.line("  %s: error: %v (%.1fs)", key, err, elapsed.Seconds())
+}
+
+func (r *humanSyncReporter) Warning(key store.DatasetKey, message string) {
+	r.line("  %s: warning: %s", key, message)
 }
 
 func (r *humanSyncReporter) Purged(key store.DatasetKey) {
@@ -390,29 +399,40 @@ func (r *syncRun) syncUser(profileID int) {
 	}()
 	go func() {
 		defer wg.Done()
-		var reviewRequestIDs []int
+		var reviewRequests map[int]string
 		reviewsSynced := r.dataset(userDataset(resourceUserSnapshots, profileID), func() ([]store.Record, error) {
 			records, linked, err := fetchUserSnapshots(r.api, profileID)
-			reviewRequestIDs = linked
+			reviewRequests = linked
 			return records, err
 		})
 		if profileID == r.profileID {
-			r.syncFeedback(reviewRequestIDs, reviewsSynced)
+			r.syncFeedback(reviewRequests, reviewsSynced)
 		}
 	}()
 	wg.Wait()
 }
 
-func (r *syncRun) syncFeedback(reviewRequestIDs []int, reviewsSynced bool) {
+func (r *syncRun) syncFeedback(reviewRequests map[int]string, reviewsSynced bool) {
 	key := sessionDataset(resourceFeedbackRequests)
 	if !reviewsSynced {
 		r.reporter.Start(key)
 		r.fail(key, fmt.Errorf("not synced because %s failed", resourceUserSnapshots), 0)
 		return
 	}
-	r.dataset(key, func() ([]store.Record, error) {
-		return fetchFeedbackRequests(r.api, r.profileID, reviewRequestIDs)
+	var notVisible []int
+	synced := r.dataset(key, func() ([]store.Record, error) {
+		records, hidden, err := fetchFeedbackRequests(r.api, r.profileID, reviewRequests)
+		notVisible = hidden
+		return records, err
 	})
+	if !synced || len(notVisible) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(notVisible))
+	for _, id := range notVisible {
+		ids = append(ids, strconv.Itoa(id))
+	}
+	r.reporter.Warning(key, fmt.Sprintf("7Geese does not show %d of the feedback requests that are attached to your reviews (IDs: %s); they are stored as not visible, with the title only", len(notVisible), strings.Join(ids, ", ")))
 }
 
 func (r *syncRun) syncRosterAndReports() {

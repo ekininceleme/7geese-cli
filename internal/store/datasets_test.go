@@ -583,7 +583,8 @@ func TestViews_ExposeFeedback(t *testing.T) {
 			{"node":{"pk":1,"text":"Great work","question":{"title":"What went well?"}}},
 			{"node":{"pk":2,"number":4,"question":{"title":"Rate the work"}}}]}}},
 		{"node":{"pk":812,"submittedTimestamp":null,"responder":{"profile":null},"answers":{"edges":[]}}}]}}`)
-	if err := s.ReplaceAll(key, []Record{{ID: "81", Data: data}, {ID: "82", Data: json.RawMessage(`{"pk":82,"title":"Draft","feedbacks":{"edges":[]}}`)}}); err != nil {
+	if err := s.ReplaceAll(key, []Record{{ID: "81", Data: data}, {ID: "82", Data: json.RawMessage(`{"pk":82,"title":"Draft","feedbacks":{"edges":[]}}`)},
+		{ID: "83", Data: json.RawMessage(`{"pk":83,"title":"Hidden","notVisible":true}`)}}); err != nil {
 		t.Fatalf("storing feedback requests: %v", err)
 	}
 
@@ -597,8 +598,12 @@ func TestViews_ExposeFeedback(t *testing.T) {
 		t.Errorf("feedback_request_view = %d %q %q %q %q %q %d", id, title, status, created, sent, creator, submitted)
 	}
 	var requests int
-	if err := s.DB().QueryRow(`SELECT count(*) FROM feedback_request_view`).Scan(&requests); err != nil || requests != 2 {
-		t.Errorf("feedback_request_view has %d rows (err %v), want 2", requests, err)
+	if err := s.DB().QueryRow(`SELECT count(*) FROM feedback_request_view`).Scan(&requests); err != nil || requests != 3 {
+		t.Errorf("feedback_request_view has %d rows (err %v), want 3", requests, err)
+	}
+	var visible string
+	if err := s.DB().QueryRow(`SELECT group_concat(id || ':' || visible, ' ') FROM (SELECT id, visible FROM feedback_request_view ORDER BY id)`).Scan(&visible); err != nil || visible != "81:1 82:1 83:0" {
+		t.Errorf("visible column = %q (err %v), want 81:1 82:1 83:0", visible, err)
 	}
 
 	rows, err := s.DB().Query(`SELECT request_id, request_title, response_id, responder_name, submitted_at, question, answer_text, answer_number FROM feedback_answer_view ORDER BY question`)

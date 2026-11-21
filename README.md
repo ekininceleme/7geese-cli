@@ -64,7 +64,7 @@ Each run is a full refresh:
 
 Datasets: user profiles, 1:1 meetings and their notes, objectives with the full check-in history, reviews, the feedback requests about you with their responses, recognition (given and received), check-ins and notifications. The objectives and reviews of your direct reports are included.
 
-The feedback requests are those where you are the recipient and those that are attached to your reviews. If 7Geese reports more submitted responses than it returns, the dataset fails and does not store an incomplete result.
+The feedback requests are those where you are the recipient and those that are attached to your reviews. If 7Geese reports more submitted responses than it returns, the dataset fails and does not store an incomplete result. If a review refers to a feedback request that 7Geese does not show to you, the request is stored as not visible (ID and title only), the sync gives a warning, and the export shows the request with `"visible": false`.
 
 A database holds the data of one 7Geese user. If you log in as a different user, use `--db` with a different path.
 
